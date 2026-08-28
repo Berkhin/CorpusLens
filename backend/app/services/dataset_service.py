@@ -99,7 +99,7 @@ def _caption_recall_by_collection(
 
 
 class DatasetService:
-    """Read-side operations over the ingested Flickr8k index."""
+    """Read-side operations over the ingested corpus index."""
 
     def __init__(
         self,
@@ -229,7 +229,7 @@ class DatasetService:
         """Fetch a single image with its captions and its measurements.
 
         Args:
-            image_id: Flickr photo id.
+            image_id: Corpus image id.
 
         Returns:
             The full record, with quality measurements attached when they

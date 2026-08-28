@@ -4,12 +4,12 @@
 the better one there: ``--reload`` belongs to the CLI. This module exists so the
 bind address can come from the same place as every other setting — the process
 environment or the repository-root ``.env`` — because uvicorn's CLI reads
-neither, and a ``FLICKR8K_PORT`` that only some entry points honoured would be
+neither, and a ``CORPUSLENS_PORT`` that only some entry points honoured would be
 worse than no setting at all.
 
 Run with::
 
-    python -m app                     # honours FLICKR8K_HOST / FLICKR8K_PORT
+    python -m app                     # honours CORPUSLENS_HOST / CORPUSLENS_PORT
 
 The container image uses this form for exactly that reason.
 """

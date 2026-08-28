@@ -8,11 +8,11 @@ services usable from tests and future CLIs without a web framework.
 from __future__ import annotations
 
 
-class Flickr8kError(Exception):
+class CorpusLensError(Exception):
     """Base class for every error this application raises deliberately."""
 
 
-class ImageNotFoundError(Flickr8kError):
+class ImageNotFoundError(CorpusLensError):
     """No image with the requested id exists in the index."""
 
     def __init__(self, image_id: str) -> None:
@@ -25,7 +25,7 @@ class ImageNotFoundError(Flickr8kError):
         self.image_id = image_id
 
 
-class ProjectionUnavailableError(Flickr8kError):
+class ProjectionUnavailableError(CorpusLensError):
     """The 2-D projection has not been computed for this data directory.
 
     Unlike :class:`DatasetUnavailableError` this is *not* a startup failure. The
@@ -35,7 +35,7 @@ class ProjectionUnavailableError(Flickr8kError):
     """
 
 
-class DatasetUnavailableError(Flickr8kError):
+class DatasetUnavailableError(CorpusLensError):
     """The on-disk artefacts the API reads are missing or unreadable.
 
     Raised at startup rather than per request: the API is a pure reader of the
@@ -45,7 +45,7 @@ class DatasetUnavailableError(Flickr8kError):
     """
 
 
-class CollectionNotFoundError(Flickr8kError):
+class CollectionNotFoundError(CorpusLensError):
     """No collection with the requested id exists in the overlay store."""
 
     def __init__(self, collection_id: str) -> None:
@@ -58,7 +58,7 @@ class CollectionNotFoundError(Flickr8kError):
         self.collection_id = collection_id
 
 
-class DuplicateCollectionNameError(Flickr8kError):
+class DuplicateCollectionNameError(CorpusLensError):
     """A collection with that name already exists.
 
     Names are compared case-insensitively: two collections called ``Holdout``
@@ -77,7 +77,7 @@ class DuplicateCollectionNameError(Flickr8kError):
         self.name = name
 
 
-class CollectionMoveTooLargeError(Flickr8kError):
+class CollectionMoveTooLargeError(CorpusLensError):
     """A move would leave more overrides in the store than the ceiling allows.
 
     The ceiling is not about the request body — a filter-driven move sends four
@@ -115,7 +115,7 @@ class CollectionMoveTooLargeError(Flickr8kError):
         self.maximum = maximum
 
 
-class BuiltinCollectionError(Flickr8kError):
+class BuiltinCollectionError(CorpusLensError):
     """A built-in collection was asked to do something only user ones can.
 
     The three built-ins mirror the dataset's own splits, which are immutable

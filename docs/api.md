@@ -289,7 +289,7 @@ Measured on the real 8 000-row table: a filtered `count_rows` takes 22 ms with n
 
 **So the ceiling is on the accumulated overlay, not on one request** — checking the batch
 bounds nothing, because the same total is reachable as eight moves of a thousand. It is
-`FLICKR8K_MAX_COLLECTION_OVERRIDES`, default **1 000**: the last size at which a filtered
+`CORPUSLENS_MAX_COLLECTION_OVERRIDES`, default **1 000**: the last size at which a filtered
 query is still interactive, with room for every set the overlay is *for* — the 32 cross-split
 duplicates, the 200 weak captions, a holdout of a few hundred. `MAX_COLLECTION_MOVE_IMAGES`
 in `schemas.py` separately bounds the request array to the corpus size; a body under that is
@@ -449,10 +449,10 @@ place a caller-supplied string reaches a query expression.
 
 **CORS** allows `http://localhost:5173` and `http://127.0.0.1:5173` with credentials off —
 the API has no auth and sets no cookies. Methods and headers are enumerated rather than
-wildcarded. Override with `FLICKR8K_CORS_ALLOW_ORIGINS`, which takes either a
+wildcarded. Override with `CORPUSLENS_CORS_ALLOW_ORIGINS`, which takes either a
 comma-separated list or a JSON array.
 
-**Bind address.** `FLICKR8K_HOST` defaults to `127.0.0.1`. Because the API has no
+**Bind address.** `CORPUSLENS_HOST` defaults to `127.0.0.1`. Because the API has no
 authentication, binding `0.0.0.0` exposes the corpus to the local network; the container
 image opts into it because the container boundary is what limits reach there. The setting
 is read by `python -m app` — the `uvicorn` CLI takes `--host`/`UVICORN_HOST` instead.

@@ -159,7 +159,7 @@ export function ImageInspectorDialog({
           <div className={INSPECTOR_LAYOUT}>
             <img
               src={resolveImageUrl(data.image.image_url)}
-              alt={data.image.captions[0] ?? `Flickr8k image ${data.image.id}`}
+              alt={data.image.captions[0] ?? `Corpus image ${data.image.id}`}
               className="max-h-[70vh] w-full rounded-lg border border-border object-contain"
             />
 

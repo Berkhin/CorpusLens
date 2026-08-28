@@ -85,7 +85,7 @@ async def list_images(
 async def get_image(
     service: DatasetServiceDep,
     settings: SettingsDep,
-    image_id: Annotated[ImageId, Path(description="Flickr photo id.")],
+    image_id: Annotated[ImageId, Path(description="Corpus image id.")],
 ) -> InspectedImageResponse:
     """Return a single image with its captions and, if computed, its analysis.
 

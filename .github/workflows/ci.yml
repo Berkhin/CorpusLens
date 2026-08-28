@@ -1,0 +1,109 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Superseded runs on the same branch or PR are pointless once a new commit
+# lands, and this repository installs a ~200 MB torch wheel per run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Read-only by default. Nothing here comments, pushes or publishes, and a
+# public repository accepting pull requests should not hand out more than the
+# job needs.
+permissions:
+  contents: read
+
+jobs:
+  backend-lint-and-test:
+    name: Backend — Ruff, mypy, pytest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # 3.12 is a ceiling, not a preference: torch 2.2.2 — the last release
+      # with a macOS x86_64 wheel, which is what pins this project's whole
+      # dependency tree — supports cp38 to cp312 only. See requirements.txt.
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      # torch first and separately, from PyTorch's CPU index. The default PyPI
+      # wheel on Linux bundles CUDA and weighs ~2 GB, which no runner here has
+      # a use for. Mirrors what docker/backend.dev.Dockerfile does.
+      - name: Install torch (CPU wheel)
+        run: pip install --index-url https://download.pytorch.org/whl/cpu torch==2.2.2
+
+      # torch is already satisfied: PEP 440 treats the local version 2.2.2+cpu
+      # as matching the ==2.2.2 pin, so this does not pull it again.
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      # `--output-format=github` turns findings into inline annotations on the
+      # diff rather than log lines a reviewer has to go looking for.
+      - name: Ruff (lint)
+        run: ruff check --output-format=github .
+
+      - name: Ruff (format)
+        run: ruff format --check .
+
+      # Paths, strictness and the two package roots all come from
+      # pyproject.toml, so this takes no arguments.
+      - name: mypy --strict
+        run: mypy
+
+      # Hermetic by construction: conftest.py stubs out lancedb and the CLIP
+      # encoder, so the suite needs no dataset, no weights and no network.
+      - name: pytest
+        run: pytest
+
+  frontend-lint:
+    name: Frontend — tsc, ESLint, Prettier, Vitest
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+
+      # Node 24 matches the base image the production Dockerfile builds the SPA
+      # with, so a version-specific failure shows up here rather than at
+      # release time.
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+          # Resolved from the repository root, not from `working-directory`.
+          cache-dependency-path: frontend/package-lock.json
+
+      # `ci` rather than `install`: it installs exactly the lockfile and fails
+      # if package.json has drifted from it.
+      - name: Install dependencies
+        run: npm ci
+
+      # `tsc -b`, covering the app and node config projects both.
+      - name: TypeScript
+        run: npm run typecheck
+
+      - name: ESLint
+        run: npm run lint
+
+      # `prettier --check`, scoped to frontend/ by the working-directory above
+      # and by .prettierignore. Formatting is checked rather than applied: CI
+      # reports drift, `make format` is what fixes it.
+      - name: Prettier
+        run: npm run format:check
+
+      # `vitest run` — the non-watch mode. Node environment, no jsdom: the
+      # cases cover the pure modules only.
+      - name: Vitest
+        run: npm run test

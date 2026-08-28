@@ -350,7 +350,7 @@ class ImageSummary:
     """Minimal record for grid/list views.
 
     Attributes:
-        id: Flickr photo id (the filename without its extension).
+        id: Corpus image id (the filename without its extension).
         file_name: Basename under the images directory.
         split: Source split — ``train``, ``validation`` or ``test``. Immutable
             ground truth from the dataset itself.
@@ -372,7 +372,7 @@ class ImageDetail:
     """A single image with its full set of reference captions.
 
     Attributes:
-        id: Flickr photo id.
+        id: Corpus image id.
         file_name: Basename under the images directory.
         split: Source split, immutable ground truth.
         collection: Effective collection; see :class:`ImageSummary`.
@@ -453,7 +453,7 @@ class ProjectionPoint:
     """One image's position on the 2-D embedding map.
 
     Attributes:
-        id: Flickr photo id, the key back to the full record.
+        id: Corpus image id, the key back to the full record.
         split: Source split, so the map can be coloured by it.
         x: Horizontal coordinate, normalised into roughly ``[-1, 1]``.
         y: Vertical coordinate, on the same scale as ``x`` — the projection

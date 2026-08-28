@@ -66,7 +66,7 @@ OUTPUT_FILE_NAME: Final = "analysis.json"
 #: quality figures that mean nothing. Read from the process environment, not
 #: from ``.env``: these scripts stay standalone (CLAUDE.md §4.2) and do not
 #: import the backend package, so exporting the variable is what propagates it.
-CLIP_MODEL_ID: Final = os.environ.get("FLICKR8K_CLIP_MODEL_ID", "clip-ViT-B-32")
+CLIP_MODEL_ID: Final = os.environ.get("CORPUSLENS_CLIP_MODEL_ID", "clip-ViT-B-32")
 
 TORCH_DEVICE: Final = "cpu"
 
@@ -169,7 +169,7 @@ class Corpus:
         """Bind the columns, which must all be in the same row order.
 
         Args:
-            ids: Flickr photo ids, in table scan order.
+            ids: Corpus image ids, in table scan order.
             splits: Split per row.
             captions: Reference captions per row.
             vectors: ``(n, 512)`` unit-length image embeddings.

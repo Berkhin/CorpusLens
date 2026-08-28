@@ -73,7 +73,7 @@ _DISTANCE_COLUMN: Final = "_distance"
 
 
 class LanceDBImageRepository:
-    """Read-only access to the ingested Flickr8k index, backed by LanceDB.
+    """Read-only access to the ingested corpus index, backed by LanceDB.
 
     Satisfies :class:`~app.repositories.vector_db.VectorRepository` structurally
     — there is no base class to inherit, by design; see that module. Conformance
@@ -257,7 +257,7 @@ class LanceDBImageRepository:
         """Fetch one image with its captions.
 
         Args:
-            image_id: Flickr photo id.
+            image_id: Corpus image id.
 
         Returns:
             The record, or ``None`` if no row carries that id.
@@ -342,7 +342,7 @@ class LanceDBImageRepository:
         pass through CLIP's text encoder.
 
         Args:
-            image_id: Flickr photo id.
+            image_id: Corpus image id.
 
         Returns:
             The unit-length 512-d embedding, or ``None`` if no row carries that

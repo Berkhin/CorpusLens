@@ -102,7 +102,7 @@ export function App(): JSX.Element {
         <div className={cn(SHELL_CONTAINER, 'flex flex-col gap-4 py-4')}>
           <div className="flex flex-wrap items-baseline justify-between gap-3">
             <div className="flex items-baseline gap-3">
-              <h1 className="font-heading text-lg font-semibold">Flickr8k Explorer</h1>
+              <h1 className="font-heading text-lg font-semibold">CorpusLens</h1>
               <p className="text-sm text-muted-foreground">
                 Browse, filter and semantically search the corpus
               </p>

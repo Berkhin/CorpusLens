@@ -32,7 +32,7 @@ from app.services.embedding import ClipEmbeddingService, EmbeddingService
 
 #: An id that exists in no fixture, so a response carrying it can only have come
 #: from the substitute store.
-ALIEN_ID: Final = "not-a-flickr-id"
+ALIEN_ID: Final = "not-a-corpus-id"
 ALIEN_DIMENSIONS: Final = 3
 
 

@@ -29,4 +29,4 @@ else
   echo "     the weak-captions filter — it adds about nine minutes)"
 fi
 
-echo "==> Done. Start the app with: docker compose up"
+echo "==> Done. Start the app with: docker compose up app"

@@ -2,7 +2,7 @@
 
 Every path, port, model id and tunable the API needs is declared here so no
 other module hardcodes one (CLAUDE.md §5.1). Values are read from the process
-environment or the repository-root ``.env`` file, each prefixed ``FLICKR8K_``.
+environment or the repository-root ``.env`` file, each prefixed ``CORPUSLENS_``.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ _REPO_ROOT: Final = Path(__file__).resolve().parents[3]
 
 
 class Settings(BaseSettings):
-    """Runtime configuration for the Flickr8k explorer API.
+    """Runtime configuration for the CorpusLens API.
 
     Attributes:
         host: Interface the server binds to. Defaults to loopback, not
@@ -90,7 +90,7 @@ class Settings(BaseSettings):
     """
 
     model_config = SettingsConfigDict(
-        env_prefix="FLICKR8K_",
+        env_prefix="CORPUSLENS_",
         env_file=_REPO_ROOT / ".env",
         env_file_encoding="utf-8",
         extra="ignore",

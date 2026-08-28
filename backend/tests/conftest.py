@@ -662,7 +662,7 @@ def tiny_move_cap(monkeypatch: pytest.MonkeyPatch) -> int:
     Returns:
         The ceiling that will be in force.
     """
-    monkeypatch.setenv("FLICKR8K_MAX_COLLECTION_OVERRIDES", str(TINY_MOVE_CAP))
+    monkeypatch.setenv("CORPUSLENS_MAX_COLLECTION_OVERRIDES", str(TINY_MOVE_CAP))
     return TINY_MOVE_CAP
 
 
@@ -728,11 +728,11 @@ def client(
     ``dependency_overrides``.
 
     ``get_settings`` is ``lru_cache``d, so its cache is cleared on both sides of
-    the test: once so the patched ``FLICKR8K_DATA_DIR`` is picked up, and once
+    the test: once so the patched ``CORPUSLENS_DATA_DIR`` is picked up, and once
     afterwards so a cached test configuration cannot leak into another test or
     into an interpreter that later imports the app for real.
     """
-    monkeypatch.setenv("FLICKR8K_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("CORPUSLENS_DATA_DIR", str(data_dir))
     get_settings.cache_clear()
 
     install_fake_backends(mocker, fake_table, fake_clip_model)
