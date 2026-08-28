@@ -1,0 +1,40 @@
+# Local, single-machine deployment of the Flickr8k Explorer.
+#
+# Two commands, in order:
+#
+#   docker compose run --rm setup     # one time, ~15 min: download + embed + project
+#   docker compose up                 # then open http://localhost:8000
+#
+# Add arguments to the first one to shorten it while trying things out, e.g.
+# `docker compose run --rm setup --limit 100` ingests only 100 images.
+#
+# No `version:` key: it has been obsolete since Compose v2 and current releases
+# warn about it.
+
+name: flickr8k-explorer
+
+services:
+  # The serving process: FastAPI, the CLIP text encoder, the LanceDB reader, and
+  # the compiled SPA — all on one port, so there is no CORS hop and no second
+  # dev server to start.
+  api:
+    build: .
+    image: flickr8k-explorer
+    ports:
+      - '8000:8000'
+    volumes:
+      # The corpus, the LanceDB table and the Hugging Face cache live on the
+      # host: ~3 GB that must survive `docker compose build`.
+      - ./data:/app/data
+
+  # One-shot offline pipeline. Same image, different entrypoint — the API is a
+  # pure reader of what this produces (CLAUDE.md §4.2), so the two never run as
+  # one process. Kept behind a profile so a bare `docker compose up` cannot
+  # accidentally start a 15-minute embedding job.
+  setup:
+    build: .
+    image: flickr8k-explorer
+    profiles: ['setup']
+    volumes:
+      - ./data:/app/data
+    entrypoint: ['bash', 'docker/setup.sh']

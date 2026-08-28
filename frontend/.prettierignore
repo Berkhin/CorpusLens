@@ -1,0 +1,6 @@
+dist
+node_modules
+# Vendored by the shadcn CLI — reformatting would create noise in every future
+# `shadcn add` diff (CLAUDE.md §4.3: do not hand-edit these).
+src/components/ui
+src/styles/tailwind.css

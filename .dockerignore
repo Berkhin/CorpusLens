@@ -1,0 +1,34 @@
+# Keep the build context small and hermetic.
+#
+# `data/` is the important entry: it holds ~3 GB of JPEGs, the HF download cache
+# and the LanceDB table. It is a runtime volume, never image content — sending
+# it as build context would make every build minutes long for nothing.
+
+.git/
+.gitignore
+.dockerignore
+
+# Runtime data and model weights — mounted, not baked in.
+data/
+
+# Anything the build produces itself.
+**/node_modules/
+**/dist/
+**/dist-ssr/
+
+# Host virtualenvs and tool caches; the image installs its own.
+**/.venv/
+**/__pycache__/
+**/*.py[cod]
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Host-local env files must not shadow the .env.production the web stage writes.
+**/.env
+**/.env.*
+!**/.env.example
+
+# Scaffolding kept out of the repo's way, and macOS clutter.
+tmp/
+**/.DS_Store

@@ -1,0 +1,37 @@
+{
+  // Extensions VS Code offers to install when this repository is opened.
+  // The set follows the toolchain fixed in CLAUDE.md §3 — nothing here is a
+  // matter of personal preference, and each entry corresponds to a config file
+  // already checked in.
+  "recommendations": [
+    // --- Python: the toolchain configured in pyproject.toml ---
+    "ms-python.python",
+    "ms-python.vscode-pylance",
+    "charliermarsh.ruff", // lint + format, per [tool.ruff]
+    "ms-python.mypy-type-checker", // strict mode, per [tool.mypy]
+
+    // --- Frontend: the toolchain configured in frontend/ ---
+    "dbaeumer.vscode-eslint", // frontend/eslint.config.js (flat config)
+    "esbenp.prettier-vscode", // frontend/.prettierrc.json
+    "bradlc.vscode-tailwindcss", // Tailwind v4, CSS-first config
+
+    // --- Configuration and container files in this repository ---
+    "tamasfe.even-better-toml", // pyproject.toml
+    "redhat.vscode-yaml", // compose.yaml
+    "ms-azuretools.vscode-docker", // Dockerfile, docker/
+
+    // --- Working on the API ---
+    // POST /api/search and /api/export take a body, so they cannot be exercised
+    // from the browser address bar. REST Client runs them from a .http file.
+    "humao.rest-client"
+  ],
+
+  // Ruff replaces black, isort, flake8 and pylint (CLAUDE.md §3). Installing
+  // any of them alongside it produces two formatters fighting over each save.
+  "unwantedRecommendations": [
+    "ms-python.black-formatter",
+    "ms-python.isort",
+    "ms-python.flake8",
+    "ms-python.pylint"
+  ]
+}

@@ -1,0 +1,17 @@
+# Development tooling (CLAUDE.md §3). Install on top of requirements.txt:
+#   uv pip install --python backend/.venv/bin/python -r requirements-dev.txt
+
+ruff==0.16.2
+mypy==1.18.2
+pytest==9.0.1
+
+# --- API test suite ---
+pytest-mock==3.15.1    # the `mocker` fixture: patches undone at test teardown
+# TestClient's HTTP client. starlette 1.6.0 imports `httpx2` first and only
+# falls back to `httpx` with a StarletteDeprecationWarning (verified by reading
+# starlette/testclient.py in the installed package), so the current dependency
+# is httpx2 — not httpx, which is present here only transitively via `datasets`.
+httpx2==2.10.0
+
+# Stubs for runtime deps that ship no type information of their own.
+types-tqdm==4.67.0.20250809

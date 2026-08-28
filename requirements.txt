@@ -1,0 +1,56 @@
+# Flickr8k Explorer — Python dependencies (offline data pipeline).
+#
+# HARDWARE CEILING — READ BEFORE CHANGING ANY PIN.
+# The target machine is macOS on Intel (x86_64). Two upstream projects stopped
+# publishing macOS x86_64 wheels, which fixes the top of this dependency tree:
+#
+#   * torch   — last macOS x86_64 wheel is 2.2.2 (verified on PyPI: 2.3.0+ ship
+#               no macosx_*_x86_64 artifact). 2.2.2 supports cp38–cp312 only,
+#               hence Python 3.12 — 3.13/3.14 cannot install torch on this Mac.
+#   * lancedb — last macOS x86_64 wheel is 0.25.3
+#               (lancedb-0.25.3-cp39-abi3-macosx_10_15_x86_64.whl).
+#
+# torch 2.2.2 is compiled against the NumPy 1.x C ABI, so NumPy must stay <2.
+# Everything else is free to float and is pinned here for reproducibility.
+#
+# Verified resolved + imported on this machine:
+#   Python 3.12.13, x86_64, Intel Core i9-9980HK.
+#
+# Install (CPU wheels are the default on macOS — no --index-url needed):
+#   uv venv backend/.venv --python 3.12
+#   uv pip install --python backend/.venv/bin/python -r requirements.txt
+
+# --- ML / embeddings (CPU only) ---
+torch==2.2.2
+numpy==1.26.4          # <2 required by the torch 2.2.2 C ABI
+sentence-transformers==5.7.0
+transformers==4.57.6   # 4.57.x still accepts torch>=2.2; transformers 5.x needs torch>=2.4
+
+# --- Dataset acquisition ---
+datasets==5.0.1
+pillow==12.3.0
+
+# --- Dimensionality reduction (offline, scripts/project.py) ---
+# Already resolved transitively via sentence-transformers; pinned as a direct
+# dependency because the projection script imports it. Used only for t-SNE —
+# PCA is plain numpy, so nothing on the serving path touches this.
+scikit-learn==1.9.0
+
+# --- Vector store (embedded, on-disk) ---
+lancedb==0.25.3
+pyarrow==25.0.0
+
+# --- CLI ergonomics ---
+tqdm==4.70.0
+
+# --- Serving API ---
+# Plain `fastapi`, deliberately NOT `fastapi[standard]`: the `standard` extra
+# pulls in fastapi-cloud-cli, which CLAUDE.md §2 rules out (no cloud services,
+# no telemetry). Nothing in that extra is needed to serve this app.
+# uvicorn is likewise unextra'd — `uvicorn[standard]` adds uvloop/httptools,
+# which buy nothing measurable for a single-user localhost tool.
+fastapi==0.141.1       # requires pydantic>=2.9, starlette>=0.46
+starlette==1.6.0       # transitive via fastapi; pinned because 1.x removed on_event
+uvicorn==0.52.1
+pydantic==2.13.4       # already transitive via lancedb; pinned as a direct dep
+pydantic-settings==2.15.0

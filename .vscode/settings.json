@@ -1,0 +1,131 @@
+{
+  // Workspace settings for the extensions in extensions.json. Every value here
+  // makes the editor agree with what `ruff check`, `mypy`, `npm run lint` and
+  // `npm run build` do on the command line — a linter that disagrees with CI is
+  // worse than no linter.
+
+  // --- Python ---------------------------------------------------------------
+
+  // The virtualenv lives under backend/, not at the repository root.
+  "python.defaultInterpreterPath": "${workspaceFolder}/backend/.venv/bin/python",
+
+  // Pylance type-checks with Pyright, which is a different implementation from
+  // mypy and disagrees with it in edge cases. Strictness is mypy's job here
+  // (pyproject.toml sets strict = true); Pylance stays on its default so the
+  // same line is not underlined twice by two tools with two opinions.
+  "python.analysis.typeCheckingMode": "basic",
+
+  // The backend is imported as the top-level `app` package and the project is
+  // deliberately not installed, so `app.*` resolves only for a tool that has
+  // been told where the root is. mypy has mypy_path and pytest has pythonpath,
+  // both naming backend/; Pylance had neither, which is why every
+  // `from app...` import was flagged as unresolved.
+  "python.analysis.extraPaths": ["backend"],
+
+  "python.testing.pytestEnabled": true,
+  "python.testing.unittestEnabled": false,
+
+  // Use the pinned ruff 0.16.2 and mypy 1.18.2 from requirements-dev.txt rather
+  // than the versions bundled with the extensions. mypy's extension defaults to
+  // the bundled copy, which is how an editor and a CI run start reporting
+  // different errors on the same file.
+  "ruff.importStrategy": "fromEnvironment",
+  "mypy-type-checker.importStrategy": "fromEnvironment",
+
+  // mypy's config declares files = ["backend", "scripts"] and strict mode, so
+  // errors are cross-module by nature: a signature change in a repository shows
+  // up in the service that calls it. Reporting only the open file would hide
+  // exactly those.
+  "mypy-type-checker.reportingScope": "workspace",
+
+  // mypy's `files = ["backend", "scripts"]` is only the default used when no
+  // path is given, and the extension passes the open file explicitly — so
+  // git-ignored scratch code under tmp/ gets strict-mode diagnostics that
+  // `mypy` on the command line never produces. Unlike ruff, mypy has no
+  // force-exclude: its own `exclude` is documented not to apply to explicitly
+  // passed files, and testing confirms it (`mypy --exclude '^tmp/'
+  // tmp/bench_arch.py` still reports 9 errors). The exclusion therefore has to
+  // live here, at the extension.
+  //
+  // Patterns are fnmatch globs, in which `*` also crosses `/`, so one entry
+  // covers tmp/fviz-scaffold/ as well. Both an anchored and a relative form are
+  // listed because the extension's docs do not state which the path is matched
+  // against.
+  "mypy-type-checker.ignorePatterns": ["${workspaceFolder}/tmp/*", "tmp/*"],
+
+  "[python]": {
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+      "source.fixAll.ruff": "explicit",
+      "source.organizeImports.ruff": "explicit"
+    }
+  },
+
+  // --- Frontend -------------------------------------------------------------
+
+  // ESLint's flat config lives in frontend/, not at the repository root.
+  // "auto" resolves the working directory per file rather than per window.
+  "eslint.workingDirectories": [{ "mode": "auto" }],
+
+  // Tailwind v4 has no tailwind.config.js — the theme is declared in CSS with
+  // @theme. Without this mapping the extension finds no config and silently
+  // offers no class completion at all.
+  "tailwindCSS.experimental.configFile": {
+    "frontend/src/styles/tailwind.css": "frontend/src/**"
+  },
+
+  // Prettier is the formatter for the languages it owns, and only those.
+  // Deliberately not set for Markdown or YAML: it would reflow README.md and
+  // compose.yaml, both of which are hand-formatted with intent. Vendored shadcn
+  // primitives are already excluded by frontend/.prettierignore.
+  "[typescript]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "editor.formatOnSave": true
+  },
+  "[typescriptreact]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "editor.formatOnSave": true
+  },
+  "[javascript]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "editor.formatOnSave": true
+  },
+  "[css]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "editor.formatOnSave": true
+  },
+
+  // Type-check with the TypeScript the project installs, not the one bundled
+  // with the editor — `npm run typecheck` and the editor must agree on the
+  // compiler version. VS Code asks for confirmation on first use.
+  "typescript.tsdk": "frontend/node_modules/typescript/lib",
+  "typescript.enablePromptUseWorkspaceTsdk": true,
+
+  // --- Noise reduction ------------------------------------------------------
+
+  // data/ holds the corpus, the LanceDB table and the Hugging Face cache —
+  // several gigabytes that must never reach the file watcher or a search.
+  "files.watcherExclude": {
+    "**/data/**": true,
+    "**/backend/.venv/**": true,
+    "**/node_modules/**": true,
+    "**/.mypy_cache/**": true,
+    "**/.ruff_cache/**": true,
+    "**/.pytest_cache/**": true
+  },
+  "search.exclude": {
+    "**/data": true,
+    "**/backend/.venv": true,
+    "**/node_modules": true,
+    "**/frontend/dist": true,
+    "**/.mypy_cache": true,
+    "**/.ruff_cache": true,
+    "**/package-lock.json": true
+  },
+
+  // Matches ruff's line-length = 100 and prettier's printWidth = 100.
+  "editor.rulers": [100],
+  "files.trimTrailingWhitespace": true,
+  "files.insertFinalNewline": true
+}

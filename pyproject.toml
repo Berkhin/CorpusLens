@@ -1,0 +1,77 @@
+# Tooling configuration only — dependencies live in requirements.txt and the
+# project is not installed as a package.
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+# The repository root is listed so `scripts.export_split` — how the one test
+# module that covers an offline script imports it — sorts as first-party.
+src = ["backend", "scripts", "."]
+# tmp/ holds git-ignored scratch benchmarks and one-off probes, not deliverable
+# code. `ruff check .` already skips it via respect-gitignore, but the editor's
+# language server lints whatever file is open regardless — so without an
+# explicit exclusion the editor reports 325 errors the command line does not.
+extend-exclude = ["tmp"]
+# Ruff lints paths passed to it *explicitly* even when they are excluded, and an
+# editor's language server passes the open file explicitly. Without this the
+# exclusion above would hold for `ruff check .` and do nothing in the editor,
+# which is the disagreement these settings exist to prevent.
+force-exclude = true
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors (includes E402, module-level import position)
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # import sorting
+    "B",    # bugbear
+    "UP",   # pyupgrade — enforces list[str] / X | None over typing.List
+    "ANN",  # missing type annotations (CLAUDE.md §5.1)
+    "D",    # docstrings (CLAUDE.md §5.1)
+    "PTH",  # flake8-use-pathlib — no os.path
+    "T20",  # flake8-print — no print()
+    "RUF",
+]
+ignore = [
+    "D203",  # incompatible with D211
+    "D213",  # incompatible with D212
+]
+
+[tool.ruff.lint.per-file-ignores]
+# scripts/ are operator-facing CLIs; CLAUDE.md §5.1 permits progress output there.
+"scripts/*" = ["T20"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+files = ["backend", "scripts"]
+# The backend is imported as the top-level `app` package (uvicorn app.main:app
+# --app-dir backend); this is what lets mypy resolve those imports too.
+mypy_path = ["backend", "."]
+# Two package roots, so `scripts/export_split.py` is the same module to mypy
+# whether it is checked directly or imported by its test. Without this it is
+# found twice — once as `export_split`, once as `scripts.export_split` — and
+# mypy refuses to check anything.
+explicit_package_bases = true
+
+# lancedb, datasets, pyarrow and scikit-learn ship no py.typed marker.
+# sentence-transformers, transformers, numpy and Pillow do, so they stay fully
+# checked. pyarrow is imported only by the test doubles, which build a real
+# Arrow table for the one repository method that reads one; sklearn only by the
+# offline projection script, for its t-SNE implementation.
+[[tool.mypy.overrides]]
+module = ["lancedb.*", "datasets.*", "pyarrow.*", "sklearn.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+# `backend` is the same import root uvicorn's --app-dir gives: tests import
+# `app.*`, not `backend.app.*`. The repository root is added so the one test
+# module that covers an offline script can `import scripts.export_split` —
+# `scripts/` has no `__init__.py` and does not need one, since PEP 420 makes it
+# a namespace package from the root alone.
+pythonpath = ["backend", "."]
+testpaths = ["backend/tests"]
