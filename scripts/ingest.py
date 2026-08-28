@@ -55,7 +55,7 @@ from tqdm import tqdm
 
 LOGGER: Final = logging.getLogger("ingest")
 
-HF_DATASET_ID: Final = os.environ.get("FLICKR8K_HF_DATASET_ID", "jxie/flickr8k")
+HF_DATASET_ID: Final = os.environ.get("CORPUSLENS_HF_DATASET_ID", "jxie/flickr8k")
 
 #: The checkpoint the whole corpus is embedded with, and therefore the one the
 #: API must encode queries with. It reads the same environment variable through
@@ -64,7 +64,7 @@ HF_DATASET_ID: Final = os.environ.get("FLICKR8K_HF_DATASET_ID", "jxie/flickr8k")
 #: process environment, not from ``.env``: this script stays standalone
 #: (CLAUDE.md §4.2) and does not import the backend package, so exporting the
 #: variable is what propagates it to both sides.
-CLIP_MODEL_ID: Final = os.environ.get("FLICKR8K_CLIP_MODEL_ID", "clip-ViT-B-32")
+CLIP_MODEL_ID: Final = os.environ.get("CORPUSLENS_CLIP_MODEL_ID", "clip-ViT-B-32")
 
 #: CLIP ViT-B/32 projects images and text into a shared 512-d space. Pinned to
 #: the schema rather than derived, so a model whose width differs fails at the

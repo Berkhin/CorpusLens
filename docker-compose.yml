@@ -1,0 +1,133 @@
+# Local, single-machine deployment of CorpusLens.
+#
+# This is the only Compose file in the repository, deliberately: Compose prefers
+# `compose.yaml` over `docker-compose.yml` when both exist, so a second file
+# would be silently ignored and `make up` would disagree with a bare
+# `docker compose up`.
+#
+# Two audiences, two entry points:
+#
+#   Contributors — hot-reload pair, the default
+#     docker compose run --rm setup     # one time, ~15 min: download + embed + project
+#     docker compose up                 # backend :8000 + Vite dev server :5173
+#
+#   Users — the single-image path, one process on one port
+#     docker compose up app             # http://localhost:8000
+#
+# `app` and `setup` carry profiles, so a bare `up` cannot start them; naming one
+# on the command line enables its profile automatically (Compose profiles docs:
+# "When a service with assigned profiles is explicitly targeted on the command
+# line its profiles are started automatically"). Naming it also matters for
+# `app`, which publishes the same port 8000 as `backend`.
+#
+# Arguments pass through to ingestion, e.g. `docker compose run --rm setup
+# --limit 100` for a fast end-to-end check.
+#
+# No `version:` key: obsolete since Compose v2, and current releases warn on it.
+
+name: corpuslens
+
+services:
+  # ---------------------------------------------------------------------------
+  # Development: FastAPI with --reload, source bind-mounted from the host.
+  # ---------------------------------------------------------------------------
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend.dev.Dockerfile
+    ports:
+      - '8000:8000'
+    # Both optional. `backend/.env` is the documented location for this service;
+    # the repository-root `.env` is loaded first because that is where
+    # `pydantic-settings` itself looks (env_file in backend/app/core/config.py),
+    # so anyone who already followed backend/.env.example keeps working. Later
+    # files win, so backend/.env overrides the root one on a collision.
+    #
+    # These become process environment variables, which outrank the .env file
+    # the application reads for itself — the values land either way.
+    env_file:
+      - path: .env
+        required: false
+      - path: backend/.env
+        required: false
+    volumes:
+      # Application code, live-edited. Mounted at the paths PYTHONPATH and the
+      # `--app-dir backend` in the image's CMD expect.
+      - ./backend:/app/backend
+      - ./scripts:/app/scripts
+      # The corpus, the LanceDB table and the Hugging Face cache: ~3 GB that
+      # must live on the host and survive `docker compose build`.
+      - ./data:/app/data
+      # Ruff/mypy/pytest configuration, for running those inside the container.
+      - ./pyproject.toml:/app/pyproject.toml:ro
+    networks:
+      - corpuslens
+
+  # ---------------------------------------------------------------------------
+  # Development: Vite dev server with HMR, source bind-mounted from the host.
+  # ---------------------------------------------------------------------------
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend.dev.Dockerfile
+    ports:
+      - '5173:5173'
+    environment:
+      # The browser runs on the host, so it reaches the API through the port
+      # published above — not through the Compose network. This is also the
+      # app's own default; set explicitly so it does not depend on a .env file
+      # that may not exist.
+      VITE_API_BASE_URL: http://localhost:8000
+      # Vite's bundled chokidar reads this (verified in the installed Vite
+      # 8.2.1 bundle: `process.env.CHOKIDAR_USEPOLLING`, accepting "true"/"1").
+      # Required because the container is Linux and inotify does not see writes
+      # made on a macOS host across a bind mount — without it, no HMR.
+      CHOKIDAR_USEPOLLING: 'true'
+    volumes:
+      - ./frontend:/app
+      # Keeps the image's node_modules from being shadowed by the mount above.
+      # Named rather than anonymous so it can be reset deliberately —
+      # `make clean` — after a dependency change.
+      - frontend_node_modules:/app/node_modules
+    depends_on:
+      - backend
+    networks:
+      - corpuslens
+
+  # ---------------------------------------------------------------------------
+  # The single-image path: SPA compiled in and served by FastAPI on one port,
+  # so there is no CORS hop and no Node on the host. Start it by name.
+  # ---------------------------------------------------------------------------
+  app:
+    profiles: ['app']
+    build: .
+    image: corpuslens
+    ports:
+      - '8000:8000'
+    volumes:
+      - ./data:/app/data
+    networks:
+      - corpuslens
+
+  # ---------------------------------------------------------------------------
+  # One-shot offline pipeline: ingest, embed, project. Same image as `app`, a
+  # different entrypoint — the API is a pure reader of what this produces
+  # (CLAUDE.md §4.2), so the two never run as one process. Behind a profile so
+  # a bare `docker compose up` cannot start a 15-minute embedding job.
+  # ---------------------------------------------------------------------------
+  setup:
+    profiles: ['setup']
+    build: .
+    image: corpuslens
+    volumes:
+      - ./data:/app/data
+    entrypoint: ['bash', 'docker/setup.sh']
+    networks:
+      - corpuslens
+
+networks:
+  corpuslens:
+    driver: bridge
+
+volumes:
+  frontend_node_modules:

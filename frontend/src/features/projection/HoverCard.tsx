@@ -54,7 +54,7 @@ export function HoverCard({ imageId, split, at, container }: HoverCardProps): JS
       {status === 'success' ? (
         <img
           src={resolveImageUrl(data.image.image_url)}
-          alt={data.image.captions[0] ?? `Flickr8k image ${data.image.id}`}
+          alt={data.image.captions[0] ?? `Corpus image ${data.image.id}`}
           className="aspect-4/3 w-full object-cover"
         />
       ) : (

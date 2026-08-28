@@ -25,9 +25,9 @@ from app.core.logging import configure_logging
 
 LOGGER: Final = logging.getLogger(__name__)
 
-_TITLE: Final = "Flickr8k Explorer API"
+_TITLE: Final = "CorpusLens API"
 _DESCRIPTION: Final = (
-    "Local, offline API over the Flickr8k corpus: paginated browsing, per-image captions, "
+    "Local, offline API over the ingested image corpus: paginated browsing, per-image captions, "
     "dataset statistics, CLIP text→image semantic search, split and caption-text filtering, "
     "a 2-D projection of the embedding space, and CSV/JSONL export of any selection."
 )

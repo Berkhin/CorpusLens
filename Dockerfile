@@ -1,13 +1,13 @@
 # syntax=docker/dockerfile:1
 #
-# Single-image build of the Flickr8k Explorer: the React SPA is compiled in one
+# Single-image build of CorpusLens: the React SPA is compiled in one
 # stage and served as static files by the FastAPI process in the next, so the
 # whole tool is one container on one port. That is deliberate — the point of
 # containerising a local research tool is that someone else can run it without
 # installing Python, Node, or matching either version.
 #
 # Nothing here reaches the network at runtime. The one-time corpus download
-# happens in the `setup` service of compose.yaml (CLAUDE.md §2).
+# happens in the `setup` service of docker-compose.yml (CLAUDE.md §2).
 
 
 # --------------------------------------------------------------------------- #
@@ -50,9 +50,9 @@ ENV PYTHONUNBUFFERED=1 \
     TOKENIZERS_PARALLELISM=false \
     HF_HOME=/app/data/hf \
     PYTHONPATH=/app/backend \
-    FLICKR8K_FRONTEND_DIST_DIR=/app/frontend-dist \
-    FLICKR8K_HOST=0.0.0.0 \
-    FLICKR8K_PORT=8000
+    CORPUSLENS_FRONTEND_DIST_DIR=/app/frontend-dist \
+    CORPUSLENS_HOST=0.0.0.0 \
+    CORPUSLENS_PORT=8000
 
 WORKDIR /app
 
@@ -80,6 +80,6 @@ COPY --from=web /web/dist ./frontend-dist
 EXPOSE 8000
 
 # `python -m app` rather than the uvicorn CLI so the bind address comes from
-# FLICKR8K_HOST / FLICKR8K_PORT above — the same settings object the rest of the
+# CORPUSLENS_HOST / CORPUSLENS_PORT above — the same settings object the rest of the
 # configuration goes through. The uvicorn CLI reads neither.
 CMD ["python", "-m", "app"]

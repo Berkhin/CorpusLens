@@ -1563,7 +1563,7 @@ def test_an_existing_store_without_the_provenance_columns_still_opens(
             (DOG_ID, "old", "2026-01-02T00:00:00+00:00"),
         )
 
-    monkeypatch.setenv("FLICKR8K_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("CORPUSLENS_DATA_DIR", str(data_dir))
     get_settings.cache_clear()
     install_fake_backends(mocker, fake_table, fake_clip_model)
 

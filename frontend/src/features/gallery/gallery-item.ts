@@ -52,7 +52,7 @@ export type GalleryItem = {
  * reader — and unique, which "Dataset image" alone would not be.
  */
 function fallbackAlt(summary: ImageSummary): string {
-  return `Flickr8k image ${summary.id} (${summary.split} split)`
+  return `Corpus image ${summary.id} (${summary.split} split)`
 }
 
 /** Build a grid item from a browse-view summary. */
@@ -107,7 +107,7 @@ export function placeholderGalleryItem(
   return {
     id: imageId,
     imageUrl: '',
-    alt: `Flickr8k image ${imageId}`,
+    alt: `Corpus image ${imageId}`,
     split: '',
     collection: '',
     collectionLabel: null,

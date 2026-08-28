@@ -155,7 +155,7 @@ class _ApiModel(BaseModel):
 class ImageSummaryResponse(_ApiModel):
     """An image as it appears in a grid or list view."""
 
-    id: str = Field(description="Flickr photo id.")
+    id: str = Field(description="Corpus image id.")
     file_name: str = Field(description="Basename of the JPEG on disk.")
     split: str = Field(description="Dataset split the image belongs to. Immutable ground truth.")
     collection: str = Field(
@@ -178,7 +178,7 @@ class ImageSummaryResponse(_ApiModel):
 class ImageDetailResponse(_ApiModel):
     """A single image with all of its reference captions."""
 
-    id: str = Field(description="Flickr photo id.")
+    id: str = Field(description="Corpus image id.")
     file_name: str = Field(description="Basename of the JPEG on disk.")
     split: str = Field(description="Dataset split the image belongs to. Immutable ground truth.")
     collection: str = Field(
@@ -415,7 +415,7 @@ class ProjectionPointResponse(_ApiModel):
     user actually hovers a point, reusing a cache the inspector already fills.
     """
 
-    id: str = Field(description="Flickr photo id.")
+    id: str = Field(description="Corpus image id.")
     split: str = Field(description="Dataset split, for colouring the map.")
     x: float = Field(description="Horizontal position, normalised to about [-1, 1].")
     y: float = Field(description="Vertical position, on the same scale as x.")

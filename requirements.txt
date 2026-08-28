@@ -1,4 +1,4 @@
-# Flickr8k Explorer — Python dependencies (offline data pipeline).
+# CorpusLens — Python dependencies (offline data pipeline).
 #
 # HARDWARE CEILING — READ BEFORE CHANGING ANY PIN.
 # The target machine is macOS on Intel (x86_64). Two upstream projects stopped

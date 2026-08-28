@@ -40,7 +40,7 @@ function saveBlob(blob: Blob, fileName: string): void {
  *
  * The scope is spelled out rather than timestamped: "selection", "search",
  * "train", "filtered" tells the user what they downloaded, where
- * `flickr8k-export-3.csv` would not.
+ * `corpuslens-export-3.csv` would not.
  *
  * The collection branch replaced an equivalent one on `filter.splits`. The UI
  * no longer sets `splits` — the built-in collections are the splits — so that
@@ -48,7 +48,7 @@ function saveBlob(blob: Blob, fileName: string): void {
  * than none.
  */
 function exportFileName(scope: ExportScope, extension: string): string {
-  const parts = ['flickr8k']
+  const parts = ['corpuslens']
   if (scope.ids !== undefined && scope.ids.length > 0) parts.push(`selection-${scope.ids.length}`)
   else if (scope.query !== undefined && scope.query.length > 0) parts.push('search')
   else if (scope.similarToImageId !== undefined) parts.push(`similar-${scope.similarToImageId}`)

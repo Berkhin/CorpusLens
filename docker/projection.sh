@@ -57,7 +57,7 @@ cached="data/projection.${method}.json"
 
 if [ "$rebuild" -eq 1 ]; then
   echo "==> Rebuilding the image"
-  docker compose build api
+  docker compose build app
 fi
 
 if [ "$recompute" -eq 1 ] || [ ! -f "$cached" ]; then
@@ -74,7 +74,7 @@ fi
 cp "$cached" data/projection.json
 
 echo "==> Restarting the API so it picks the artefact up at startup"
-docker compose up -d --force-recreate api
+docker compose up -d --force-recreate app
 
 echo "==> Waiting for startup (the CLIP encoder loads first)"
 until curl -sf "${API_URL}/api/dataset/stats" >/dev/null 2>&1; do sleep 1; done

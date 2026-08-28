@@ -26,7 +26,7 @@ _MEDIA_TYPES: Final[dict[ExportFormat, str]] = {
     "jsonl": "application/x-ndjson; charset=utf-8",
 }
 
-_FILENAME_STEM: Final = "flickr8k-export"
+_FILENAME_STEM: Final = "corpuslens-export"
 
 
 @router.post(

@@ -1,8 +1,9 @@
-# Flickr8k Explorer
+# CorpusLens
 
-**A local, offline visualization and exploration tool for the Flickr8k image-captioning
-dataset — an interactive map of its CLIP embedding space, semantic search, filtering,
-caption inspection and subset export, running entirely on one machine.**
+**A local, offline visualization and exploration tool for image-captioning corpora — an
+interactive map of the CLIP embedding space, semantic search, filtering, caption
+inspection and subset export, running entirely on one machine. Ships with Flickr8k as
+the reference corpus.**
 
 ---
 
@@ -144,7 +145,7 @@ is for developing on it.
 
 ```bash
 docker compose run --rm setup   # once: download, embed, project. ~15 min, ~3 GB
-docker compose up               # then open http://localhost:8000
+docker compose up app           # then open http://localhost:8000
 ```
 
 One container serves the API and the compiled frontend on a single port, so there is no
@@ -157,8 +158,13 @@ committing to the full run.
 
 Two things worth knowing: the image is **~2.4 GB** (CPU `torch` alone unpacks to 706 MB),
 and the setup step is the same CPU-bound embedding pass it is natively — the container
-removes the *setup* friction, not the arithmetic. If the `api` container exits saying the
+removes the *setup* friction, not the arithmetic. If the `app` container exits saying the
 data directory is empty, you have not run the setup profile yet.
+
+`up app` names the service on purpose. A bare `docker compose up` starts the *contributor*
+pair instead — `backend` on :8000 with `--reload` and the Vite dev server on :5173, both
+with the source bind-mounted from the host. That is the containerised equivalent of the
+native path below, and `make up` is the shorthand for it.
 
 The `torch==2.2.2` and `lancedb==0.25.3` pins have Linux wheels for both `x86_64` and
 `aarch64`, so the same `requirements.txt` builds natively on an Intel or an Apple Silicon
@@ -343,12 +349,12 @@ The port is pinned with `strictPort` because the backend's CORS policy whitelist
 `localhost:5173` and `127.0.0.1:5173`; a silent fallback to 5174 would surface as an opaque
 CORS failure. If you need to run the API elsewhere, copy `frontend/.env.example` to
 `frontend/.env`, set `VITE_API_BASE_URL`, and add the new Vite origin to
-`FLICKR8K_CORS_ALLOW_ORIGINS` on the backend.
+`CORPUSLENS_CORS_ALLOW_ORIGINS` on the backend.
 
 ### Configuration
 
 Backend settings are environment-driven via `pydantic-settings`, read from the process
-environment or a repository-root `.env`, each prefixed `FLICKR8K_` (see
+environment or a repository-root `.env`, each prefixed `CORPUSLENS_` (see
 `backend/app/core/config.py`). Every path, port, model id, and bound has a documented
 default — **no configuration is required to run**.
 
@@ -362,16 +368,16 @@ cp backend/.env.example .env
 
 Two notes on the settings that are easy to get wrong:
 
-- **`FLICKR8K_HOST` defaults to `127.0.0.1`, not `0.0.0.0`.** The API has no
+- **`CORPUSLENS_HOST` defaults to `127.0.0.1`, not `0.0.0.0`.** The API has no
   authentication, so binding every interface would publish the corpus to the local
   network. The container image sets `0.0.0.0`, where the container boundary is what
   limits reach. It is read by `python -m app`; the `uvicorn` CLI ignores it and takes
   `--host` or `UVICORN_HOST`.
-- **`FLICKR8K_CLIP_MODEL_ID` must match what the corpus was embedded with.** A mismatch
+- **`CORPUSLENS_CLIP_MODEL_ID` must match what the corpus was embedded with.** A mismatch
   does not raise — it produces a "shared" embedding space that isn't shared, and search
   silently degrades to noise. The offline scripts read the same variable from the process
   environment (they do not parse `.env`, being standalone per §4.2), so changing it means
-  `export FLICKR8K_CLIP_MODEL_ID=... && python scripts/ingest.py --force`.
+  `export CORPUSLENS_CLIP_MODEL_ID=... && python scripts/ingest.py --force`.
 
 ---
 
@@ -418,6 +424,19 @@ Frontend structure and decisions: [`docs/frontend.md`](./docs/frontend.md).
 ---
 
 ## Development commands
+
+`make` wraps the commands below; `make help` lists every target. `make lint` and
+`make test` run exactly what CI runs, in the same order, so passing them locally means
+passing [`.github/workflows/ci.yml`](./.github/workflows/ci.yml).
+
+```bash
+make up          # containers: backend :8000 + frontend :5173, hot reload
+make lint        # ruff + mypy + tsc + eslint
+make test        # pytest
+make format      # ruff format + prettier
+```
+
+The targets below are what those wrap, and work the same without Docker or `make`.
 
 ```bash
 # Backend (from the repo root, venv active)

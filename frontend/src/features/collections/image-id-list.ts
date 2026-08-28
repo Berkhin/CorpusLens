@@ -23,7 +23,7 @@ const IMAGE_ID_PATTERN = /^[A-Za-z0-9._-]+$/
  * Mirrors `MAX_COLLECTION_MOVE_IMAGES` in backend/app/models/schemas.py.
  *
  * This is the *body* limit, which is why it is the corpus size rather than the
- * much smaller `FLICKR8K_MAX_COLLECTION_OVERRIDES` the backend really enforces.
+ * much smaller `CORPUSLENS_MAX_COLLECTION_OVERRIDES` the backend really enforces.
  * A paste under this length can still be refused with a 413 once it is clear
  * how many overrides it would leave behind — that answer needs the server's
  * view of the current overlay, so it is not second-guessed here.

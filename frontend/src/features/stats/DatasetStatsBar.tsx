@@ -69,7 +69,7 @@ export function DatasetStatsBar(): JSX.Element | null {
     <div className="flex flex-wrap items-center gap-x-8 gap-y-2">
       <div className="flex items-center gap-2 text-muted-foreground">
         <Database className="size-4" aria-hidden="true" />
-        <span className="text-xs font-medium tracking-wide uppercase">Flickr8k</span>
+        <span className="text-xs font-medium tracking-wide uppercase">Corpus</span>
       </div>
 
       {status === 'pending' ? (
