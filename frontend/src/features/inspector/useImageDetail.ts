@@ -18,8 +18,20 @@ import type { InspectedImage } from '@/types/api'
  *
  * @param imageId Image to inspect, or `null` when nothing is selected — the
  *   query stays disabled rather than the caller conditionally calling a hook.
+ * @param options.enabled Whether this caller is ready to *fetch*. Defaults to
+ *   true, which is what the inspector wants: it opens on a deliberate click.
+ *   The projection's hover card passes false until the cursor settles, so a
+ *   sweep across the cloud does not issue a request per point crossed.
+ *
+ *   Gating the fetch is deliberately not the same as passing a null id. A
+ *   disabled query still reads the cache, so a point whose record was already
+ *   fetched renders instantly on re-hover while an unseen one waits out the
+ *   delay — the debounce costs nothing where the answer is already known.
  */
-export function useImageDetail(imageId: string | null): UseQueryResult<InspectedImage, Error> {
+export function useImageDetail(
+  imageId: string | null,
+  options: { enabled?: boolean } = {},
+): UseQueryResult<InspectedImage, Error> {
   return useQuery({
     queryKey: queryKeys.dataset.detail(imageId ?? ''),
     queryFn: ({ signal }) => {
@@ -28,6 +40,6 @@ export function useImageDetail(imageId: string | null): UseQueryResult<Inspected
       if (imageId === null) throw new Error('useImageDetail: no image selected')
       return fetchImageDetail(imageId, signal)
     },
-    enabled: imageId !== null,
+    enabled: imageId !== null && (options.enabled ?? true),
   })
 }

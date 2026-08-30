@@ -3,9 +3,13 @@ import { useEffect, useState } from 'react'
 /**
  * Follow a value, but only after it has stopped changing for `delayMs`.
  *
- * Used for the caption filter: typing "dog" would otherwise commit `d`, `do`
- * and `dog`, and every commit is a filtered scan plus a second count on the
- * backend.
+ * Shared rather than owned by a feature, because two need it for the same
+ * underlying reason — a continuous input driving a discrete request:
+ *
+ * * the caption filter, where typing "dog" would otherwise commit `d`, `do` and
+ *   `dog`, each a filtered scan plus a count on the backend;
+ * * the projection's hover card, where sweeping the cursor across the cloud
+ *   would otherwise request one image per point crossed.
  *
  * This is one of the `useEffect` cases CLAUDE.md §5.2 does allow — the external
  * system being synchronised with is the timer, and no data is fetched here. The

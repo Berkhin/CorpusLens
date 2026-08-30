@@ -8,7 +8,7 @@ import { CollectionChips } from '@/features/collections/CollectionChips'
 import { CollectionManagerDialog } from '@/features/collections/CollectionManagerDialog'
 import { MoveToCollectionMenu } from '@/features/collections/MoveToCollectionMenu'
 import { Chip } from '@/features/filters/Chip'
-import { useDebouncedValue } from '@/features/filters/useDebouncedValue'
+import { useDebouncedValue } from '@/lib/useDebouncedValue'
 import { useFilteredTotal } from '@/features/gallery/useImageList'
 import {
   EMPTY_IMAGE_FILTER,
