@@ -24,9 +24,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # 3.12 is a ceiling, not a preference: torch 2.2.2 — the last release
-      # with a macOS x86_64 wheel, which is what pins this project's whole
-      # dependency tree — supports cp38 to cp312 only. See requirements.txt.
+      # 3.12 matches the reference environment, where torch 2.2.2 — the last
+      # release with a macOS x86_64 wheel — supports cp38 to cp312 only. Linux
+      # is not subject to that ceiling (see the markers in requirements.txt);
+      # this runner stays on 3.12 so CI checks the same interpreter developers
+      # on the reference machine are held to.
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
@@ -39,11 +41,17 @@ jobs:
       # torch first and separately, from PyTorch's CPU index. The default PyPI
       # wheel on Linux bundles CUDA and weighs ~2 GB, which no runner here has
       # a use for. Mirrors what docker/backend.dev.Dockerfile does.
+      #
+      # Unpinned on purpose. requirements.txt asks Linux for `torch>=2.4`, so
+      # naming 2.2.2 here would install a wheel the next step immediately
+      # replaces — and it would replace it from PyPI, i.e. with the ~2 GB CUDA
+      # build this step exists to avoid. Letting the CPU index pick its latest
+      # satisfies the constraint in one download.
       - name: Install torch (CPU wheel)
-        run: pip install --index-url https://download.pytorch.org/whl/cpu torch==2.2.2
+        run: pip install --index-url https://download.pytorch.org/whl/cpu torch
 
-      # torch is already satisfied: PEP 440 treats the local version 2.2.2+cpu
-      # as matching the ==2.2.2 pin, so this does not pull it again.
+      # torch is already satisfied by the step above, so this does not pull it
+      # again. It does resolve numpy, which tracks the same platform split.
       - name: Install dependencies
         run: pip install -r requirements.txt -r requirements-dev.txt
 

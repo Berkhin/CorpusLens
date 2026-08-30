@@ -11,9 +11,17 @@
 # same order. `make lint && make test` passing locally means CI passes.
 
 SHELL := /bin/bash
-.DEFAULT_GOAL := help
+.DEFAULT_GOAL := start
 
 COMPOSE := docker compose
+
+# Passed to the `user:` keys in docker-compose.yml so containers write files as
+# the caller rather than as root. Both must be *exported*: `UID` is a shell
+# variable that bash and zsh never export, and `GID` is normally unset, so
+# without these two lines Compose would silently fall back to its 1000 default.
+# Computed with `id` rather than read from the environment for the same reason.
+export UID := $(shell id -u)
+export GID := $(shell id -g)
 
 # Prefer the project venv documented in requirements.txt; fall back to whatever
 # `python3` is on PATH so the targets still work in a container or in CI.
@@ -24,8 +32,24 @@ PYTHON      := $(if $(wildcard $(VENV_PYTHON)),$(VENV_PYTHON),python3)
 # shell, so a bare `cd` would not survive to the next one.
 NPM := npm --prefix frontend
 
-.PHONY: help up down build logs setup lint lint-backend lint-frontend \
+.PHONY: start help up down build logs setup lint lint-backend lint-frontend \
         test test-backend test-frontend test-docker format format-check clean
+
+# ---------------------------------------------------------------------------
+# The one command
+# ---------------------------------------------------------------------------
+
+# The default goal, so a bare `make` on a fresh clone does the whole thing.
+#
+# Ordered dependencies rather than one recipe: `setup` must finish before `up`
+# starts, because the API refuses to boot without a corpus. Both halves stay
+# runnable on their own — `make up` after a reboot should not re-run a
+# fifteen-minute job.
+#
+# Safe to repeat. Ingestion skips records already in the table, so on a machine
+# that is already set up this re-derives the projection and the quality
+# measurements (seconds) and then starts the stack.
+start: setup up ## Set up the corpus if needed, then start the app
 
 # ---------------------------------------------------------------------------
 # Help
@@ -37,7 +61,7 @@ help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
 	@echo
-	@echo 'First run: make setup   (one time, ~15 min, downloads ~3 GB)'
+	@echo 'First run: make start   (one time, ~15 min, downloads ~3 GB)'
 
 # ---------------------------------------------------------------------------
 # Docker Compose
@@ -57,9 +81,18 @@ build: ## Build (or rebuild) the images
 logs: ## Follow the container logs
 	$(COMPOSE) logs -f
 
-# Not part of `up`: this downloads ~3 GB and embeds 8k images on CPU. Extra
-# arguments reach scripts/ingest.py, e.g. `make setup ARGS='--limit 100'`.
+# Extra arguments reach scripts/ingest.py, e.g. `make setup ARGS='--limit 100'`.
+#
+# `data/` is created here, by the caller, rather than left to Docker. A bind
+# mount whose source is missing is created by the daemon as root, which the
+# containers — now running as the host user — could not then write to. Creating
+# it first is what makes that ownership work on the very first run.
+#
+# `app` is built explicitly because it is the only service carrying `build:` for
+# this image; `setup` declares `image:` alone to keep two builders off one tag.
 setup: ## One-time corpus download, embedding and projection (~15 min)
+	@mkdir -p data
+	$(COMPOSE) --profile app build app
 	$(COMPOSE) run --rm setup $(ARGS)
 
 # ---------------------------------------------------------------------------

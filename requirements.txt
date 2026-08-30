@@ -1,30 +1,52 @@
 # CorpusLens — Python dependencies (offline data pipeline).
 #
-# HARDWARE CEILING — READ BEFORE CHANGING ANY PIN.
-# The target machine is macOS on Intel (x86_64). Two upstream projects stopped
-# publishing macOS x86_64 wheels, which fixes the top of this dependency tree:
+# THE ONE HARDWARE CEILING — READ BEFORE CHANGING THE TORCH PIN.
+# macOS on Intel (x86_64) is the reference environment and the only platform
+# with a ceiling. Upstream stopped publishing macOS x86_64 wheels there:
 #
-#   * torch   — last macOS x86_64 wheel is 2.2.2 (verified on PyPI: 2.3.0+ ship
-#               no macosx_*_x86_64 artifact). 2.2.2 supports cp38–cp312 only,
-#               hence Python 3.12 — 3.13/3.14 cannot install torch on this Mac.
-#   * lancedb — last macOS x86_64 wheel is 0.25.3
-#               (lancedb-0.25.3-cp39-abi3-macosx_10_15_x86_64.whl).
+#   * torch — last macOS x86_64 wheel is 2.2.2 (verified on PyPI: 2.3.0+ ship
+#             no macosx_*_x86_64 artifact). 2.2.2 supports cp38–cp312 only,
+#             hence Python 3.12 — 3.13/3.14 cannot install torch on that Mac.
+#             It is also built against the NumPy 1.x C ABI, so NumPy follows.
 #
-# torch 2.2.2 is compiled against the NumPy 1.x C ABI, so NumPy must stay <2.
-# Everything else is free to float and is pinned here for reproducibility.
+# That ceiling is a property of one platform, not of this project, so it is
+# expressed as an environment marker rather than a global pin. Linux with CUDA
+# and Apple Silicon both resolve a current torch and reach their accelerators;
+# `app.services.embedding.resolve_device` detects whichever is present and
+# falls back to CPU when none is (CLAUDE.md §2).
 #
-# Verified resolved + imported on this machine:
+# lancedb stays pinned across every platform, deliberately: 0.25.3 is the last
+# macOS x86_64 wheel *and* the version whose `create_index` / query-builder API
+# this code was verified against (CLAUDE.md §6). Floating it per platform would
+# mean two API surfaces to verify for no gain.
+#
+# Verified resolved + imported on the reference machine:
 #   Python 3.12.13, x86_64, Intel Core i9-9980HK.
 #
-# Install (CPU wheels are the default on macOS — no --index-url needed):
+# Install:
 #   uv venv backend/.venv --python 3.12
 #   uv pip install --python backend/.venv/bin/python -r requirements.txt
+#
+# CUDA users: PyPI's default torch wheel bundles CUDA on Linux. For a specific
+# CUDA version, install torch first from the matching index, then this file:
+#   uv pip install torch --index-url https://download.pytorch.org/whl/cu124
 
-# --- ML / embeddings (CPU only) ---
-torch==2.2.2
-numpy==1.26.4          # <2 required by the torch 2.2.2 C ABI
+# --- ML / embeddings ---
+# The marker pair is exhaustive and mutually exclusive: NOT(darwin AND x86_64)
+# expands to (not darwin) OR (not x86_64), so exactly one line applies anywhere.
+torch==2.2.2; sys_platform == "darwin" and platform_machine == "x86_64"
+torch>=2.4; sys_platform != "darwin" or platform_machine != "x86_64"
+
+# NumPy tracks the torch split for the same C ABI reason. 2.x is fine wherever
+# torch is current; the reference environment is the only place it cannot go.
+numpy==1.26.4; sys_platform == "darwin" and platform_machine == "x86_64"
+numpy>=1.26,<3; sys_platform != "darwin" or platform_machine != "x86_64"
+
 sentence-transformers==5.7.0
-transformers==4.57.6   # 4.57.x still accepts torch>=2.2; transformers 5.x needs torch>=2.4
+# 4.57.x accepts torch>=2.2, so it is the one version that installs on both
+# sides of the split. Pinned globally to keep the matrix at two cells, not four;
+# transformers 5.x would need torch>=2.4 and so a third marker.
+transformers==4.57.6
 
 # --- Dataset acquisition ---
 datasets==5.0.1

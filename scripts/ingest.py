@@ -3,15 +3,21 @@
 
 Pulls ``jxie/flickr8k`` through Hugging Face ``datasets``, writes each image's
 original JPEG bytes to ``data/images/`` (so FastAPI can serve them statically
-later), encodes every image with CLIP ``clip-ViT-B-32`` on the CPU, and stores
-the resulting 512-d vectors alongside their five reference captions in an
-embedded LanceDB table under ``data/lancedb/``.
+later), encodes every image with CLIP ``clip-ViT-B-32`` on whichever device is
+available, and stores the resulting 512-d vectors alongside their five reference
+captions in an embedded LanceDB table under ``data/lancedb/``.
 
 This script is the *only* place CLIP image inference happens. Measured on the
-target machine (Core i9-9980HK, 8 torch threads) throughput is ~10 images/s, so
-a full pass over the ~8k corpus takes roughly 15 minutes — far too slow to sit
-inside a request handler, which is why the serving API never embeds images per
-request and only queries the index this script produces (CLAUDE.md §2).
+reference machine (Core i9-9980HK, CPU, 8 torch threads) throughput is
+~10 images/s, so a full pass over the ~8k corpus takes roughly 15 minutes — far
+too slow to sit inside a request handler, which is why the serving API never
+embeds images per request and only queries the index this script produces
+(CLAUDE.md §2). A CUDA or MPS device shortens the wall clock; it does not change
+that division of labour.
+
+Memory is bounded by ``--encode-batch-size``, not by how much is read at a time:
+decoding streams in encode-sized chunks, so pointing this at a corpus of large
+photographs does not put the whole read batch in RAM. See :func:`_ingest_batch`.
 
 Idempotent and resumable: records already present in the table are skipped, so
 an interrupted run can simply be restarted. ``--force`` rebuilds from scratch;
@@ -78,12 +84,52 @@ SPLITS: Final = ("train", "validation", "test")
 CAPTION_COLUMNS: Final = tuple(f"caption_{index}" for index in range(5))
 
 TABLE_NAME: Final = "images"
-DEFAULT_BATCH_SIZE: Final = 32
 
-#: CLAUDE.md §2 forbids CUDA/MPS: this project targets an Intel Mac, and torch
-#: 2.2.2 (the last build with a macOS x86_64 wheel) has no usable accelerator
-#: here anyway. The device is a constant, never auto-detected.
-TORCH_DEVICE: Final = "cpu"
+#: Images per CLIP forward pass. Also the ceiling on how many decoded images are
+#: resident at once — the two were one number until it turned out they should
+#: not be; see :func:`_ingest_batch`.
+DEFAULT_ENCODE_BATCH_SIZE: Final = 32
+
+#: Rows per Arrow read from the dataset. Larger than the encode batch because a
+#: bigger read amortizes parquet overhead, and — now that decoding streams — it
+#: no longer costs memory to raise.
+DEFAULT_READ_BATCH_SIZE: Final = 256
+
+#: Longest edge to decode JPEGs at. CLIP ViT-B/32 resizes to 224x224 regardless,
+#: so decoding a 4000px original at full size is work done only to throw away.
+#: Requesting a little above the model's input keeps the final resample's
+#: quality; see :func:`_decode_image`.
+DECODE_TARGET_PIXELS: Final = 448
+
+
+def _resolve_device() -> str:
+    """Pick the torch device for the embedding pass.
+
+    The batch-workload counterpart to ``app.services.embedding.resolve_device``.
+    Duplicated rather than imported because the offline scripts are standalone
+    by contract (CLAUDE.md §4.2) and do not depend on the backend package —
+    keep the two in step if the detection order ever changes.
+
+    **This one always takes MPS when it is usable, and the serving path does
+    not.** That is deliberate, not drift. Measured on the reference machine (an
+    Intel Mac whose AMD GPU supports MPS), a 64-image batch runs at 81 img/s on
+    MPS against 37 img/s on CPU — a 2.2x win, because a batch amortizes the
+    host-to-device transfer over enough arithmetic to pay for it. The same
+    transfer makes a single short text encode 3.7x *slower* on MPS, which is
+    why the API reaches the opposite conclusion for its workload. See
+    ``resolve_device`` there for the full table.
+
+    Returns:
+        ``"cuda"``, ``"mps"`` or ``"cpu"``, degrading rather than raising when
+        an accelerator is present but unusable.
+    """
+    if torch.cuda.is_available():
+        return "cuda"
+    # `is_built()` distinguishes "this wheel has no MPS backend" from "no MPS
+    # hardware"; `is_available()` alone conflates them on some builds.
+    if torch.backends.mps.is_available() and torch.backends.mps.is_built():
+        return "mps"
+    return "cpu"
 
 
 # lancedb ships no py.typed marker, so `LanceModel` resolves to `Any` and strict
@@ -152,10 +198,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Drop and rebuild the table instead of resuming.",
     )
     parser.add_argument(
-        "--batch-size",
+        "--encode-batch-size",
         type=int,
-        default=DEFAULT_BATCH_SIZE,
-        help="Images per CLIP forward pass.",
+        default=DEFAULT_ENCODE_BATCH_SIZE,
+        help="Images per CLIP forward pass, and the most decoded images held at once.",
+    )
+    parser.add_argument(
+        "--read-batch-size",
+        type=int,
+        default=DEFAULT_READ_BATCH_SIZE,
+        help="Rows read from the dataset per iteration. Does not affect memory.",
     )
     parser.add_argument(
         "--threads",
@@ -175,8 +227,10 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if args.limit is not None and args.limit < 1:
         parser.error("--limit must be a positive integer")
-    if args.batch_size < 1:
-        parser.error("--batch-size must be a positive integer")
+    if args.encode_batch_size < 1:
+        parser.error("--encode-batch-size must be a positive integer")
+    if args.read_batch_size < 1:
+        parser.error("--read-batch-size must be a positive integer")
     if args.threads is not None and args.threads < 1:
         parser.error("--threads must be a positive integer")
     return args
@@ -311,10 +365,35 @@ def _write_image(destination: Path, payload: bytes) -> None:
     temporary.replace(destination)
 
 
+def _decode_image(payload: bytes) -> PilImageType:
+    """Decode one image to RGB, no larger than the encoder needs.
+
+    ``draft()`` asks libjpeg to decode at 1/2, 1/4 or 1/8 scale directly,
+    skipping DCT coefficients rather than computing them and discarding the
+    result. Since CLIP resizes to 224x224 anyway, decoding a 4000px original at
+    full resolution is pure waste — of time, and of the memory that made a large
+    batch dangerous. It is a no-op for formats that do not support it and for
+    images already below the target, so it costs nothing on the reference
+    corpus, whose images are ~500x375.
+
+    Args:
+        payload: Encoded image bytes.
+
+    Returns:
+        The decoded image in RGB. Flickr8k contains a few greyscale JPEGs and
+        CLIP's preprocessor expects three channels, so the conversion is not
+        optional.
+    """
+    with PilImage.open(BytesIO(payload)) as handle:
+        handle.draft("RGB", (DECODE_TARGET_PIXELS, DECODE_TARGET_PIXELS))
+        return handle.convert("RGB")
+
+
 def _encode_images(
     model: SentenceTransformer,
     images: list[PilImageType],
     batch_size: int,
+    device: str,
 ) -> NDArray[np.float32]:
     """Embed images into the shared CLIP space.
 
@@ -326,6 +405,7 @@ def _encode_images(
         model: The loaded CLIP bi-encoder.
         images: Decoded RGB images.
         batch_size: Images per forward pass.
+        device: Resolved torch device.
 
     Returns:
         An ``(len(images), EMBEDDING_DIM)`` float32 array of unit vectors.
@@ -336,7 +416,7 @@ def _encode_images(
         convert_to_numpy=True,
         normalize_embeddings=True,
         show_progress_bar=False,
-        device=TORCH_DEVICE,
+        device=device,
     )
     # `encode` is typed as a union because its return type depends on runtime
     # flags; `convert_to_numpy=True` pins it to an ndarray.
@@ -352,12 +432,22 @@ def _ingest_batch(
     images_dir: Path,
     known_ids: set[str],
     model: SentenceTransformer,
-    batch_size: int,
+    encode_batch_size: int,
+    device: str,
 ) -> list[dict[str, object]]:
     """Turn one dataset batch into LanceDB rows, skipping what already exists.
 
     Images are always written if missing — even for rows already in the table —
     so a deleted ``data/images/`` can be repaired without re-embedding.
+
+    **Decoding streams in encode-sized chunks.** This function used to decode
+    every image in the read batch before encoding any of them, which tied peak
+    memory to the read size. That was harmless on the reference corpus, whose
+    images are ~500x375, and dangerous on anything larger: a 256-row read of
+    4000x3000 photographs is ~8.8 GB of decoded RGB resident at once, and the
+    failure mode is an OOM kill partway through a job measured in tens of
+    minutes. Decoding a chunk, encoding it, then dropping it caps residency at
+    ``encode_batch_size`` images regardless of how much is read at a time.
 
     Args:
         batch: Columnar slice from ``Dataset.iter``.
@@ -366,18 +456,19 @@ def _ingest_batch(
         images_dir: Destination for JPEG files.
         known_ids: Ids already in the table; mutated as new rows are staged.
         model: The loaded CLIP bi-encoder.
-        batch_size: Images per forward pass.
+        encode_batch_size: Images per forward pass, and the cap on decoded
+            images held simultaneously.
+        device: Resolved torch device.
 
     Returns:
         Rows to append, empty when the whole batch was already ingested.
     """
     raw_images = cast(list[dict[str, object]], batch["image"])
 
-    pending_ids: list[str] = []
-    pending_names: list[str] = []
-    pending_offsets: list[int] = []
-    decoded: list[PilImageType] = []
-
+    # Identify and persist first, decode later: writing every file even for rows
+    # already in the table is what lets a deleted data/images/ be repaired
+    # without re-embedding, and it costs nothing to separate from the CLIP pass.
+    pending: list[tuple[str, str, int, bytes]] = []
     for offset, raw_image in enumerate(raw_images):
         record_id, file_name = _record_identity(raw_image, split, start_index + offset)
         payload = raw_image.get("bytes")
@@ -389,31 +480,30 @@ def _ingest_batch(
 
         if record_id in known_ids:
             continue
-
-        # CLIP's preprocessor expects RGB; Flickr8k contains a few greyscale JPEGs.
-        with PilImage.open(BytesIO(payload)) as handle:
-            decoded.append(handle.convert("RGB"))
-        pending_ids.append(record_id)
-        pending_names.append(file_name)
-        pending_offsets.append(offset)
-
-    if not decoded:
-        return []
-
-    vectors = _encode_images(model, decoded, batch_size)
+        pending.append((record_id, file_name, offset, payload))
 
     rows: list[dict[str, object]] = []
-    for position, record_id in enumerate(pending_ids):
-        rows.append(
-            {
-                "id": record_id,
-                "file_name": pending_names[position],
-                "split": split,
-                "captions": _extract_captions(batch, pending_offsets[position]),
-                "vector": vectors[position].tolist(),
-            }
-        )
-        known_ids.add(record_id)
+    for chunk_start in range(0, len(pending), encode_batch_size):
+        chunk = pending[chunk_start : chunk_start + encode_batch_size]
+        decoded = [_decode_image(payload) for *_, payload in chunk]
+        vectors = _encode_images(model, decoded, encode_batch_size, device)
+
+        for position, (record_id, file_name, offset, _) in enumerate(chunk):
+            rows.append(
+                {
+                    "id": record_id,
+                    "file_name": file_name,
+                    "split": split,
+                    "captions": _extract_captions(batch, offset),
+                    "vector": vectors[position].tolist(),
+                }
+            )
+            known_ids.add(record_id)
+
+        # Drop the decoded chunk before decoding the next one. Without this the
+        # list stays referenced for the whole loop and the cap above is fiction.
+        decoded.clear()
+
     return rows
 
 
@@ -435,9 +525,14 @@ def ingest(args: argparse.Namespace) -> int:
 
     if args.threads is not None:
         torch.set_num_threads(args.threads)
+
+    # Unlike the serving process, this one wants every core it can get: it runs
+    # a single long batch job with no concurrent requests to trade against, so
+    # torch's own default of one thread per core is right here.
+    device = _resolve_device()
     LOGGER.info(
         "Device %r, torch %s, %d thread(s)",
-        TORCH_DEVICE,
+        device,
         torch.__version__,
         torch.get_num_threads(),
     )
@@ -455,7 +550,7 @@ def ingest(args: argparse.Namespace) -> int:
     )
 
     LOGGER.info("Loading CLIP model %r (first run downloads weights) ...", CLIP_MODEL_ID)
-    model = SentenceTransformer(CLIP_MODEL_ID, device=TORCH_DEVICE)
+    model = SentenceTransformer(CLIP_MODEL_ID, device=device)
 
     db = lancedb.connect(lancedb_dir)
     table = _open_table(db, force=args.force)
@@ -467,7 +562,7 @@ def ingest(args: argparse.Namespace) -> int:
     with tqdm(total=total_rows, unit="img", desc="Embedding", file=sys.stderr) as progress:
         for split, dataset in splits:
             start_index = 0
-            for batch in dataset.iter(batch_size=args.batch_size):
+            for batch in dataset.iter(batch_size=args.read_batch_size):
                 typed_batch = cast("dict[str, list[object]]", batch)
                 rows = _ingest_batch(
                     typed_batch,
@@ -476,7 +571,8 @@ def ingest(args: argparse.Namespace) -> int:
                     images_dir=images_dir,
                     known_ids=known_ids,
                     model=model,
-                    batch_size=args.batch_size,
+                    encode_batch_size=args.encode_batch_size,
+                    device=device,
                 )
                 if rows:
                     table.add(rows)
@@ -489,12 +585,29 @@ def ingest(args: argparse.Namespace) -> int:
     LOGGER.info("Wrote %d new record(s); table now holds %d", written, table.count_rows())
     LOGGER.info("Images: %s", images_dir)
     LOGGER.info("LanceDB: %s (table %r)", lancedb_dir, TABLE_NAME)
-    # Deliberately no ANN index. At ~8k rows a brute-force cosine scan over
-    # 8k x 512 float32 (~16 MB) is single-digit milliseconds and exact, whereas
-    # LanceDB's IVF_PQ defaults (256 partitions, 96 sub-vectors) would put ~31
-    # rows in each partition and quantize the vectors — strictly worse recall
-    # for no latency win. Revisit only if the corpus grows by orders of magnitude.
-    LOGGER.info("No ANN index built: exact search is faster and lossless at this scale")
+    # Deliberately no ANN index here — but the earlier reasoning in this comment
+    # was wrong about *why*, and the corrected version is worth recording.
+    #
+    # Measured on the reference machine at 8 000 rows: IVF-PQ is genuinely
+    # faster than the exact scan (6.0 ms against 22.5 ms), not slower as this
+    # comment used to claim. What it does is lose a third of the true
+    # neighbours — recall@20 of 0.695. `nprobes` cannot fix that, because the
+    # loss is quantization rather than partition pruning; sweeping it from 1 to
+    # 256 moved recall by 0.008. Only `refine_factor`, which re-ranks against
+    # the full-precision vectors, does — and at the setting that restores
+    # honest recall (0.997) the query costs 20.0 ms, which is the exact scan
+    # again to within noise.
+    #
+    # So the conclusion stands and the corpus ships unindexed: at this size an
+    # index buys nothing. It stops being true somewhere around 50k rows, and
+    # `scripts/build_index.py` is where that decision now lives, with the
+    # crossover measurements in its module docstring.
+    LOGGER.info(
+        "No ANN index built: at %d rows an exact scan matches a recall-corrected "
+        "index for latency and is lossless. Run `python scripts/build_index.py` "
+        "if this corpus grows past ~50k rows.",
+        table.count_rows(),
+    )
     return written
 
 

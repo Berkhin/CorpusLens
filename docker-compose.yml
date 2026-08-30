@@ -8,11 +8,16 @@
 # Two audiences, two entry points:
 #
 #   Contributors — hot-reload pair, the default
+#     make start                        # does both of the following, in order
 #     docker compose run --rm setup     # one time, ~15 min: download + embed + project
 #     docker compose up                 # backend :8000 + Vite dev server :5173
 #
 #   Users — the single-image path, one process on one port
 #     docker compose up app             # http://localhost:8000
+#
+# Prefer `make start` over the raw commands: it exports UID/GID for the `user:`
+# keys below and creates ./data before Docker can, so files land owned by you
+# rather than by root. Compose alone still works, with 1000:1000 as a fallback.
 #
 # `app` and `setup` carry profiles, so a bare `up` cannot start them; naming one
 # on the command line enables its profile automatically (Compose profiles docs:
@@ -35,6 +40,26 @@ services:
     build:
       context: .
       dockerfile: docker/backend.dev.Dockerfile
+    # Named explicitly rather than left to Compose's `<project>-<service>`
+    # derivation, so the tag is stable no matter what the project is called or
+    # which directory it was cloned into.
+    image: corpuslens-api
+    # Never reach for a registry: these tags are built here and published
+    # nowhere. Without this, naming the image explicitly makes `up` attempt a
+    # pull first and print "pull access denied" before falling back to building
+    # it — two lines that read like a failure on somebody's first run.
+    pull_policy: never
+    # Write files as the host user instead of root. Everything this service
+    # creates under ./data — `collections.db` and its WAL sidecars — lands on a
+    # bind mount, and root-owned files there need sudo to remove on Linux.
+    # macOS maps ownership through the VM and is unaffected either way.
+    #
+    # The defaults are a fallback, not the expected path: `UID` is a shell
+    # variable that bash and zsh do not export, and `GID` is usually unset
+    # entirely, so Compose would see neither. The Makefile exports both; a bare
+    # `docker compose up` falls back to 1000, which is the first human user on
+    # most Linux systems and harmless on macOS.
+    user: "${UID:-1000}:${GID:-1000}"
     ports:
       - '8000:8000'
     # Both optional. `backend/.env` is the documented location for this service;
@@ -70,6 +95,18 @@ services:
     build:
       context: .
       dockerfile: docker/frontend.dev.Dockerfile
+    # Explicit for the same reason as `corpuslens-api` above.
+    image: corpuslens-ui
+    # Never reach for a registry: these tags are built here and published
+    # nowhere. Without this, naming the image explicitly makes `up` attempt a
+    # pull first and print "pull access denied" before falling back to building
+    # it — two lines that read like a failure on somebody's first run.
+    pull_policy: never
+    # Deliberately *not* given a `user:`. Unlike the backend this service writes
+    # nothing to a bind-mounted host directory — its only writable path is the
+    # `frontend_node_modules` volume, which Docker owns. Running npm under an
+    # arbitrary uid with no matching passwd entry breaks its cache resolution
+    # for no benefit here.
     ports:
       - '5173:5173'
     environment:
@@ -100,8 +137,13 @@ services:
   # ---------------------------------------------------------------------------
   app:
     profiles: ['app']
+    # The only service that builds the single-image variant. `setup` runs the
+    # same image with another entrypoint and therefore declares `image:` alone —
+    # see the note there for why both cannot declare `build:`.
     build: .
     image: corpuslens
+    pull_policy: never
+    user: "${UID:-1000}:${GID:-1000}"
     ports:
       - '8000:8000'
     volumes:
@@ -117,8 +159,25 @@ services:
   # ---------------------------------------------------------------------------
   setup:
     profiles: ['setup']
-    build: .
+    # **No `build:` here, and that is the fix for a real bug.** This service and
+    # `app` are the same image with different entrypoints, so both once carried
+    # `build: .` alongside `image: corpuslens`. Building both in one invocation
+    # then races two writers onto one tag: one wins, the other fails with
+    # `image "corpuslens:latest": already exists`, and BuildKit cancels the rest
+    # of the graph. Observed leaving a truncated 541 MB image where a complete
+    # one is 2.45 GB — a failure that leaves a usable-looking tag behind.
+    #
+    # One builder, one tag. `make setup` builds `app` first so a clean clone
+    # still works in one command.
     image: corpuslens
+    # Refuse the registry here too. With no `build:` of its own, a missing image
+    # would otherwise surface as a Docker Hub auth error instead of the true
+    # cause — that `app` has not been built yet, which `make setup` does for you.
+    pull_policy: never
+    # The service that actually creates the corpus: every JPEG under
+    # data/images/ and the whole LanceDB table are written here, so this is
+    # where host ownership matters most.
+    user: "${UID:-1000}:${GID:-1000}"
     volumes:
       - ./data:/app/data
     entrypoint: ['bash', 'docker/setup.sh']

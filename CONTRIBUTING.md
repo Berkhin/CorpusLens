@@ -23,12 +23,17 @@ exercises the container one.
 git clone https://github.com/Berkhin/corpuslens.git
 cd corpuslens
 
-make setup     # one time: download, embed, project (~15 min, ~3 GB)
-make up        # backend :8000 + Vite dev server :5173, both hot-reloading
+make start     # download, embed, project (~15 min, ~3 GB), then bring the stack up
 ```
 
-Use `make setup ARGS='--limit 100'` for a ~2 minute end-to-end check first. Source is
-bind-mounted from the host, so your editor drives the containers directly.
+That is the default goal, so a bare `make` does the same. It runs `setup` then `up`; both
+remain available separately, which is what you want after a reboot (`make up` alone) or after
+changing the pipeline (`make setup` alone).
+
+Use `make setup ARGS='--limit 100' && make up` for a ~2 minute end-to-end check first — the
+limit bounds embedding, not the download, so expect ~2.7 GB regardless
+([#3](https://github.com/Berkhin/CorpusLens/issues/3)). Source is bind-mounted from the host,
+so your editor drives the containers directly.
 
 ### Option B — Native
 
@@ -74,6 +79,7 @@ seconds.
 
 | Target | What it does |
 |---|---|
+| `make start` | **The default goal.** `setup` then `up` — everything, from a clean clone. |
 | `make setup` | One-time corpus download, embedding and projection. Takes `ARGS='--limit 100'`. |
 | `make up` | Start backend + frontend in the background, with hot reload. |
 | `make down` | Stop and remove the containers. |

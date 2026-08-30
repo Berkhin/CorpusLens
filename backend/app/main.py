@@ -11,11 +11,12 @@ this module only assembles middleware, mounts and routers.
 from __future__ import annotations
 
 import logging
-from typing import Final
+from typing import Any, Final
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import api_router
@@ -37,6 +38,39 @@ _VERSION: Final = "0.1.0"
 #: than it saves bandwidth on a small JSON body over loopback; it earns its keep
 #: on the one large payload this API serves, the full projection cloud.
 _GZIP_MINIMUM_SIZE: Final = 1000
+
+#: One year, the maximum any cache is expected to honour. Paired with
+#: ``immutable`` below; see :class:`_ImmutableStaticFiles` for why that is safe.
+_IMAGE_CACHE_SECONDS: Final = 31_536_000
+
+
+class _ImmutableStaticFiles(StaticFiles):
+    """Static files the browser may keep without asking again.
+
+    Starlette sets ``etag`` and ``last-modified`` but no ``Cache-Control``
+    (verified against the installed starlette 1.6.0), so a browser revalidates
+    every file on every view. Each revalidation returns an empty 304, but it is
+    still a round trip — a 50-image grid scrolled back to costs 50 of them, and
+    a virtualized grid re-requests as the user scrolls.
+
+    ``immutable`` is the right claim here rather than an optimistic one. Ingested
+    file names are Flickr photo ids, the API never writes to ``data/images/``
+    (CLAUDE.md §4.2), and re-running ingestion writes each file only when it is
+    absent. The bytes behind a URL therefore cannot change without the URL
+    changing, which is exactly the precondition the directive states.
+    """
+
+    def file_response(self, *args: Any, **kwargs: Any) -> Response:  # noqa: ANN401
+        """Add the cache directive to whatever Starlette built.
+
+        ``setdefault`` rather than assignment so an explicit header set upstream
+        — by a future range-request path, say — still wins.
+        """
+        response = super().file_response(*args, **kwargs)
+        response.headers.setdefault(
+            "cache-control", f"public, max-age={_IMAGE_CACHE_SECONDS}, immutable"
+        )
+        return response
 
 
 def _configure_cors(app: FastAPI, settings: Settings) -> None:
@@ -70,11 +104,16 @@ def _mount_images(app: FastAPI, settings: Settings) -> None:
 
     Serving originals rather than thumbnails is a deliberate deferral: Flickr8k
     images are small (a few hundred KB) and the browser is on localhost, so a
-    resize pipeline would be optimising a link with no latency to save.
+    resize pipeline would be optimising a link with no latency to save. That
+    reasoning is scale-dependent and stops holding for a corpus of
+    photographs — a thumbnail pass belongs in ``scripts/ingest.py``, where the
+    bytes are already decoded, rather than in a request handler.
+
+    Cached aggressively regardless; see :class:`_ImmutableStaticFiles`.
     """
     app.mount(
         settings.images_url_prefix,
-        StaticFiles(directory=settings.images_dir, check_dir=False),
+        _ImmutableStaticFiles(directory=settings.images_dir, check_dir=False),
         name="images",
     )
 

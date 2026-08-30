@@ -17,6 +17,11 @@ type HoverCardProps = {
   split: string
   at: ScreenPoint
   container: { width: number; height: number }
+  /**
+   * Whether the cursor has rested here long enough to justify a request. The
+   * parent owns the timing; see `HOVER_FETCH_DELAY_MS` in `ProjectionView`.
+   */
+  mayFetch: boolean
 }
 
 /**
@@ -27,9 +32,21 @@ type HoverCardProps = {
  * ships on every filter change. Instead this fetches the record on demand
  * through the same hook and the same cache entry the inspector uses, so
  * hovering a point warms the dialog that a click then opens.
+ *
+ * **The card is immediate; only its image waits.** The id, the split and the
+ * position are already in memory, so they render the moment the cursor arrives.
+ * Gating the request behind `mayFetch` is what stops a sweep across the cloud
+ * from issuing one request per point crossed — and because a disabled query
+ * still reads the cache, a point visited before comes back with no wait at all.
  */
-export function HoverCard({ imageId, split, at, container }: HoverCardProps): JSX.Element {
-  const { data, status } = useImageDetail(imageId)
+export function HoverCard({
+  imageId,
+  split,
+  at,
+  container,
+  mayFetch,
+}: HoverCardProps): JSX.Element {
+  const { data, status } = useImageDetail(imageId, { enabled: mayFetch })
 
   // Flip across the cursor when the card would otherwise leave the plot.
   const left =

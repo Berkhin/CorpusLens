@@ -1,13 +1,16 @@
 import { useEffect, useState } from 'react'
 
-import type { CanvasSize } from '@/features/projection/scatter-viewport'
+/** An element's measured content box. */
+export type ElementSize = { width: number; height: number }
 
 /**
  * Track an element's content box.
  *
- * The canvas needs it to size its backing store, and the hover card needs it to
- * know when to flip to the other side of the cursor. Measuring once, here, and
- * passing the result down keeps those two from disagreeing during a resize.
+ * Shared rather than owned by a feature, because two now need it for unrelated
+ * reasons: the projection canvas sizes its backing store from it, and the
+ * gallery derives its column count and row height from it. Structurally
+ * identical to the projection's own `CanvasSize`, so neither slice has to know
+ * about the other's types.
  *
  * **Returns a callback ref, not a `useRef` object, and that is the whole point.**
  * The view this serves returns a skeleton while the projection loads, so the
@@ -19,9 +22,9 @@ import type { CanvasSize } from '@/features/projection/scatter-viewport'
  *
  * @returns The ref to attach, and the element's current size.
  */
-export function useElementSize(): [(node: HTMLElement | null) => void, CanvasSize] {
+export function useElementSize(): [(node: HTMLElement | null) => void, ElementSize] {
   const [node, setNode] = useState<HTMLElement | null>(null)
-  const [size, setSize] = useState<CanvasSize>({ width: 0, height: 0 })
+  const [size, setSize] = useState<ElementSize>({ width: 0, height: 0 })
 
   useEffect(() => {
     if (node === null) return

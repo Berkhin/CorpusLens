@@ -32,13 +32,20 @@ feature count.
 | **No external vector DB** | LanceDB **embedded** only. No Pinecone, Weaviate, Qdrant server, Milvus, pgvector. |
 | **No paid APIs** | No OpenAI/Anthropic/Cohere/Replicate calls at runtime. All inference is local. |
 | **No telemetry** | Disable analytics/telemetry in any library that ships it. |
-| **Hardware** | **macOS on Intel CPU.** No CUDA, no MPS, no Apple Silicon assumptions. All ML is CPU-bound `torch` (install CPU wheels). Never suggest `device="mps"` or `device="cuda"`. |
+| **Hardware** | **Must not *assume* an accelerator; may *use* one.** The reference environment is macOS on Intel CPU, and every code path must remain correct and installable there. Detection is dynamic (`cuda` → `mps` → `cpu`) and always degrades to CPU rather than raising, so a machine without an accelerator is a slower run, never a failed one. Never hardcode a device. |
 | **Network** | Allowed **once**, during a one-time ingestion step, to pull the Flickr8k dataset and CLIP weights from Hugging Face. After that, the app must run fully offline. |
 
 **Performance implication:** CPU-only CLIP inference over ~8k images is slow (minutes,
-not seconds). Embedding is therefore a **one-time offline batch job** in `scripts/`,
-never something triggered by an HTTP request. The API only ever *queries* a pre-built index.
-The single exception: encoding a short user query string at search time (fast, ~tens of ms).
+not seconds), and the reference environment is CPU-only. Embedding is therefore a
+**one-time offline batch job** in `scripts/`, never something triggered by an HTTP request.
+The API only ever *queries* a pre-built index. The single exception: encoding a short user
+query string at search time (fast, ~tens of ms). An accelerator makes the batch job faster;
+it does not move it onto the request path.
+
+**Scale implication:** the reference corpus is ~8k images, where an exact brute-force scan
+(~21 ms, measured) beats any approximate index. Larger corpora are supported through an
+optional IVF-PQ index built offline by `scripts/build_index.py`. Exactness is never traded
+away silently — see §4.4.
 
 ---
 
@@ -57,7 +64,10 @@ The single exception: encoding a short user query string at search time (fast, ~
 - **Hugging Face `datasets`** — Flickr8k acquisition and iteration
 - **`sentence-transformers`** with **`clip-ViT-B-32`** — 512-dim image & text embeddings in a shared space
 - **`lancedb`** — embedded, file-backed vector database at `data/lancedb/`
-- **`torch`** — CPU build only
+- **`torch`** — resolved per platform. The macOS x86_64 reference environment is capped at
+  2.2.2 (the last release with a `macosx_*_x86_64` wheel), which also forces `numpy<2` for
+  its C ABI. Every other platform takes a current build, which is what makes CUDA and MPS
+  reachable. Both constraints live in `requirements.txt` as environment markers.
 - **Pillow** — image I/O and thumbnail generation
 - **`scikit-learn`** — the t-SNE implementation in `scripts/project.py`, and nothing else.
   PCA there is plain `numpy.linalg.svd`, which keeps the centring, the sign convention
@@ -71,6 +81,9 @@ The single exception: encoding a short user query string at search time (fast, ~
 - **Tailwind CSS** — utility-first styling
 - **Shadcn UI** — component primitives, vendored into `src/components/ui/`
 - **TanStack Query** — server state, caching, pagination
+- **TanStack Virtual** — windowed rendering for the image grid. Approved as an exception to
+  the rule below: the grid accumulates pages as the user scrolls, so without windowing the
+  DOM grows without bound and the browser degrades long before the API does.
 - **ESLint + Prettier**
 
 **Do not introduce any dependency not listed above without explicitly proposing it first**,
@@ -148,6 +161,44 @@ never the index. See `app/repositories/collection_repository.py` and `docs/api.m
 - **Data fetching lives in hooks**, never inline in a component body. Components render;
   hooks fetch.
 - **No business logic in JSX.** Derive values above the return, or in a hook.
+- **Long lists must be windowed.** The grid accumulates pages, so rendering every accumulated
+  item is unbounded DOM growth. Virtualize; keep selection keyed by id, never by index, so an
+  offscreen selection survives.
+
+### 4.4 Search exactness — the contract
+
+Vector search may be approximate, but **never silently**. Three regimes, decided per query in
+`LanceDBImageRepository`, never above it:
+
+| Situation | Path | Recall |
+|---|---|---|
+| No ANN index on the table | exact scan | exact |
+| Index present, no filter | IVF-PQ + `refine_factor` | ~1.000 measured |
+| Index present, selective filter | index **bypassed**, exact scan | exact |
+
+The third row is the one that matters and the reason the routing exists. An IVF pre-filter is
+applied *within probed partitions*, so a selective filter starves the candidate pool: measured
+on a 200k-row corpus, a filter selecting 20% of rows dropped recall@20 from 1.000 to 0.71 while
+still returning a full page of results — invisible to the caller. Raising `nprobes` tenfold did
+not recover it. Since a selective filter is also what makes an exact scan cheap, the exact path
+is taken instead.
+
+Two rules follow, and both are load-bearing:
+
+- **`refine_factor` is the recall lever, not `nprobes`.** The loss under IVF-PQ is quantization
+  distortion, not partition pruning. Sweeping `nprobes` from 1 to 256 on the reference corpus
+  moved recall by 0.008; `refine_factor=10` moved it from 0.695 to 0.997.
+- **A recall regression test guards this.** Without one, an upstream change to LanceDB's
+  defaults degrades search quality with every test still green.
+
+**`IVF_FLAT` was considered and rejected.** It partitions without quantizing, so its recall
+loss comes only from pruning — which `nprobes` *can* fix, unlike PQ distortion. The cost is
+storing full-precision vectors in the index: roughly 4x the footprint, resident. That trades
+away the property this tool is built on — an embedded, file-backed store you can run on a
+laptop (§2) — to buy accuracy the hybrid above already delivers, since the selective-filter
+case falls back to an exact scan anyway. Brute force for high selectivity plus IVF-PQ for
+scale is the standard pairing; do not re-litigate it without a memory budget that says
+otherwise.
 
 ---
 
