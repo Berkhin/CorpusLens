@@ -57,18 +57,21 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 
 # torch is installed first and separately, from PyTorch's CPU index, because on
-# Linux the default PyPI wheel bundles CUDA and weighs ~2 GB — useless here and
-# ruled out by CLAUDE.md §2.
+# Linux the default PyPI wheel bundles CUDA and weighs ~2 GB. This image has no
+# GPU to reach, so it takes the CPU build deliberately — a CUDA deployment would
+# override this line and let `resolve_device` find the accelerator.
 #
-# The pin is the same 2.2.2 as requirements.txt: verified that the CPU index
-# carries torch-2.2.2+cpu-cp312-linux_x86_64 *and* torch-2.2.2-cp312-manylinux
-# aarch64, and that lancedb 0.25.3 publishes manylinux wheels for both arches.
-# So the container builds natively on an Intel or an Apple Silicon host and the
-# dependency set never forks from the one used on the host.
-RUN pip install --index-url https://download.pytorch.org/whl/cpu torch==2.2.2
+# Unpinned, unlike the reference environment. requirements.txt caps torch at
+# 2.2.2 only for macOS x86_64 (the last wheel published for it) and asks every
+# other platform for >=2.4, so naming 2.2.2 here would install a wheel the next
+# layer immediately replaces — from PyPI, i.e. with the CUDA build this line
+# exists to avoid. lancedb 0.25.3 publishes manylinux wheels for x86_64 and
+# aarch64 alike, so this builds natively on either host.
+RUN pip install --index-url https://download.pytorch.org/whl/cpu torch
 
-# Everything else from PyPI. torch is already satisfied (PEP 440 treats the
-# local version 2.2.2+cpu as matching ==2.2.2), so this does not pull it again.
+# Everything else from PyPI. torch is already satisfied by the layer above, so
+# this does not pull it again; it does resolve numpy, which follows the same
+# platform split.
 COPY requirements.txt ./
 RUN pip install -r requirements.txt
 

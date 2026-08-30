@@ -427,10 +427,25 @@ layer knows the store reports a distance. Note that CLIP's modality gap makes ab
 text↔image similarities low (~0.2–0.35 for good matches) — rank order is the signal, not
 the magnitude.
 
-**No ANN index.** Consistent with the closing note in `scripts/ingest.py`: at ~8k rows a
-brute-force scan over 8k × 512 float32 is single-digit milliseconds and exact, while
-IVF_PQ's defaults would quantize vectors for no latency win. Searches return exact nearest
-neighbours.
+**Exact by default, approximate only where it is free.** The shipped corpus carries no ANN
+index — at ~8k rows a brute-force scan is ~21 ms and exact, and an index tuned back to
+honest recall costs the same (see `scripts/build_index.py` for the measurements). Searches
+therefore return exact nearest neighbours.
+
+Where a corpus is large enough that `scripts/build_index.py` has built an index, the
+repository picks per query:
+
+| Situation | Path | Recall |
+|---|---|---|
+| No index on the table | exact scan | exact |
+| Index, no filter | IVF-PQ + `refine_factor` | ~1.000 measured |
+| Index, filter leaving ≤ `CORPUSLENS_EXACT_SCAN_CEILING` rows | index bypassed | exact |
+
+The third row is a correctness rule, not a tuning choice. An IVF pre-filter is applied
+within the probed partitions, so a selective filter starves the candidate pool: measured on
+a 200k corpus, filtering to 20% of rows dropped recall@20 from 1.000 to 0.71 while still
+returning a full page. Since a selective filter also makes the exact scan cheap, the exact
+path is taken instead. `CLAUDE.md` §4.4 is the contract.
 
 **Pagination ordering** is the table's scan order — the order ingestion wrote rows in
 (train, then validation, then test), verified stable across repeated calls. This is a

@@ -242,9 +242,18 @@ interrupted run can simply be restarted. `--limit N` always takes a stable prefi
 limited run and a full run agree on record *i* — meaning you can smoke-test with `--limit`
 and later run the full ingest without `--force`.
 
-Useful flags: `--force` (drop and rebuild), `--batch-size N` (images per forward pass),
-`--threads N` (cap torch's CPU threads), `--verbose`. Run `python scripts/ingest.py --help`
-for the full list.
+Useful flags: `--force` (drop and rebuild), `--encode-batch-size N` (images per forward
+pass, and the cap on decoded images held in memory), `--read-batch-size N` (rows read per
+iteration; does not affect memory), `--threads N` (cap torch's CPU threads), `--verbose`.
+Run `python scripts/ingest.py --help` for the full list.
+
+The device is detected rather than configured: CUDA if present, then Apple's MPS, then CPU.
+Batch image encoding is where an accelerator pays — measured 81 img/s on MPS against
+37 img/s on CPU on the reference machine.
+
+**Corpora past ~50k images** should follow ingestion with `python scripts/build_index.py`,
+which builds an ANN index if the corpus is large enough to benefit and declines with an
+explanation if it is not. `--status` reports what exists without changing anything.
 
 > Those timings are embedding time. The **first** run also downloads ~1 GB of dataset and
 > ~580 MB of CLIP weights, which dominates it; both are cached, so every later run —
@@ -501,10 +510,20 @@ container that does exist is a convenience rather than a dependency.
 Because its columnar format stores captions and metadata alongside the vectors, one query
 returns a fully renderable result; there is no second lookup to join metadata back on.
 
-**No ANN index, deliberately.** At ~8k rows, a brute-force scan over 8k × 512 float32 takes
-single-digit milliseconds and is *exact*. Building an IVF_PQ index would quantize the
-vectors — trading recall for a latency win that does not exist at this scale. This is a
-scale-appropriate choice, not an omission.
+**No ANN index at this scale, deliberately — and it is measured, not assumed.** At ~8k rows
+a brute-force scan over 8k × 512 float32 takes ~21 ms and is *exact*. An IVF_PQ index over
+the same corpus is genuinely faster at 6 ms, but returns only 0.695 recall@20: product
+quantization discards a third of the true neighbours. `nprobes` does not fix that (sweeping
+1→256 moves recall by 0.008, because the loss is quantization rather than partition
+pruning); `refine_factor`, which re-ranks candidates against the full-precision vectors,
+does — and at `refine_factor=10` the query costs 20 ms for 0.997 recall, which is the exact
+scan again to within noise.
+
+So the corpus ships unindexed because the index buys nothing here, not because approximate
+search is unsupported. Past roughly 50k rows the arithmetic inverts — at 200k the same
+configuration is 6.6 ms against 204 ms at no measured recall cost — and
+`scripts/build_index.py` builds the index then. See §4.4 of `CLAUDE.md` for the exactness
+contract that governs how the API uses one.
 
 **Correctness in the embedding space.** `normalize_embeddings=True` is passed explicitly on
 both the ingestion and the query side. It is *not* the `sentence-transformers` default, and

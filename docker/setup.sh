@@ -6,6 +6,13 @@
 # resumes rather than starting over. Any arguments given to
 # `docker compose run --rm setup` are forwarded to the ingestion script — most
 # usefully `--limit N` for a fast end-to-end check.
+#
+# `--limit N` bounds the *embedding*, not the download. Hugging Face resolves a
+# split slice by fetching whole parquet shards, and the CLIP checkpoint is
+# fetched in full regardless, so even `--limit 20` writes about 2.7 GB into
+# data/ (measured: 1.1 GB of shards, 1.6 GB of weights). It saves CPU minutes,
+# not bandwidth. Making the limit reach the download is tracked upstream as
+# "[Enhancement] Lazy streaming for dataset downloads".
 
 set -euo pipefail
 
@@ -29,4 +36,8 @@ else
   echo "     the weak-captions filter — it adds about nine minutes)"
 fi
 
-echo "==> Done. Start the app with: docker compose up app"
+# `make up` rather than `docker compose up app`: the README's path is the
+# two-container dev stack with hot reload on :5173, and `make start` runs this
+# script and then that. Naming the single-image `app` profile here sent anyone
+# following the output to a different topology than the one documented.
+echo "==> Done. Start the app with: make up   (or 'make start' to do both)"

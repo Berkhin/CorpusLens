@@ -23,13 +23,112 @@ its own docstring.
 from __future__ import annotations
 
 import logging
+import platform
 from io import BytesIO
-from typing import Final, Protocol, cast, runtime_checkable
+from typing import Final, Literal, Protocol, cast, runtime_checkable
 
 import numpy as np
 from numpy.typing import NDArray
 
 LOGGER: Final = logging.getLogger(__name__)
+
+#: Sentinel asking :func:`resolve_device` to detect rather than obey.
+AUTO_DEVICE: Final = "auto"
+
+
+#: What the device will be asked to do. The distinction is load-bearing on one
+#: real configuration; see :func:`resolve_device`.
+Workload = Literal["interactive", "batch"]
+
+
+def _mps_is_usable() -> bool:
+    """Report whether this torch build can actually run on MPS.
+
+    ``is_available()`` alone is not enough: a wheel compiled without the backend
+    still exposes ``torch.backends.mps``, and only ``is_built()`` separates "no
+    backend in this build" from "no supported hardware".
+    """
+    import torch
+
+    return bool(torch.backends.mps.is_available() and torch.backends.mps.is_built())
+
+
+def _mps_shares_memory_with_cpu() -> bool:
+    """Report whether MPS here means unified memory rather than a bus.
+
+    Apple Silicon shares one memory pool between CPU and GPU, so moving a tensor
+    to MPS costs almost nothing. An Intel Mac reaches MPS through a discrete or
+    integrated AMD GPU across a real bus, where every forward pass pays a round
+    trip a small workload cannot amortize.
+
+    Architecture is the honest proxy for that difference, and it is the one
+    torch does not expose directly.
+    """
+    return platform.machine() == "arm64"
+
+
+def resolve_device(requested: str, *, workload: Workload = "interactive") -> str:
+    """Pick the torch device to run the encoder on.
+
+    Ordered by throughput — CUDA, then Apple's MPS, then CPU — with one measured
+    exception described below. An accelerator that is *present but unusable*
+    degrades to CPU rather than raising: a query encoder that fails at startup
+    takes the whole application down in exchange for a speed-up nobody asked
+    for, which is a bad trade at any corpus size.
+
+    **Why ``workload`` exists.** Measured on the reference machine, an Intel Mac
+    whose AMD GPU does in fact support MPS:
+
+    ========================  ==========  ==========  =============
+    workload                  CPU         MPS         faster
+    ========================  ==========  ==========  =============
+    one short text query      13.5 ms     50.6 ms     CPU, by 3.7x
+    64-image batch            37 img/s    81 img/s    MPS, by 2.2x
+    ========================  ==========  ==========  =============
+
+    Both are real and neither generalises to the other. A single 77-token encode
+    is dominated by the host-to-device round trip; a batch of images amortizes
+    that trip over enough arithmetic to win decisively. Preferring MPS
+    unconditionally would have made every search on this machine nearly four
+    times slower in the name of acceleration.
+
+    The split applies only where the round trip is a real cost — where CPU and
+    GPU do not share memory. On Apple Silicon and on CUDA both workloads take
+    the accelerator, which is what that hardware deserves. Encoded vectors are
+    identical either way (measured cosine 1.000000), so this is a throughput
+    decision and never a correctness one.
+
+    Args:
+        requested: ``"auto"`` to detect, or an explicit device name to return
+            unchanged. An explicit name is obeyed without probing, so an
+            operator can keep this process off a GPU that belongs to a training
+            run — and can override the heuristic above in either direction.
+        workload: ``"interactive"`` for one-off encodes on the request path,
+            ``"batch"`` for the offline pass over a corpus.
+
+    Returns:
+        A device string safe to hand to ``SentenceTransformer``.
+    """
+    if requested != AUTO_DEVICE:
+        return requested
+
+    # Imported here rather than at module scope for the same reason `load`
+    # defers `sentence_transformers`: importing this module must stay cheap.
+    import torch
+
+    if torch.cuda.is_available():
+        return "cuda"
+
+    if _mps_is_usable():
+        if workload == "batch" or _mps_shares_memory_with_cpu():
+            return "mps"
+        LOGGER.info(
+            "MPS is available but not used for interactive encoding on this "
+            "architecture: without unified memory the transfer costs more than the "
+            "forward pass saves. Set CORPUSLENS_TORCH_DEVICE=mps to override."
+        )
+
+    return "cpu"
 
 
 @runtime_checkable
@@ -72,11 +171,16 @@ class EmbeddingService(Protocol):
 
 
 class ClipEmbeddingService:
-    """CLIP bi-encoder over ``sentence-transformers``, on the CPU.
+    """CLIP bi-encoder over ``sentence-transformers``.
 
     Satisfies :class:`EmbeddingService`. Construct once per process — loading
     the checkpoint costs seconds — via :meth:`load` from the application
     lifespan, never per request.
+
+    Runs wherever :func:`resolve_device` lands, which is CPU on the reference
+    environment and an accelerator where one exists. Nothing else in the
+    application needs to know which: the vectors are identical either way, so
+    the device is a throughput decision, not a correctness one.
     """
 
     def __init__(self, model: object, device: str) -> None:
@@ -91,11 +195,20 @@ class ClipEmbeddingService:
                 real class resolves to ``Any`` and would silently disable
                 checking on every attribute reached through it; the two call
                 sites below narrow it explicitly instead.
-            device: Torch device for the forward pass; always ``"cpu"`` here,
-                per CLAUDE.md §2.
+            device: Resolved torch device the model was placed on. Already
+                concrete — :meth:`load` resolves ``"auto"`` before it gets here.
         """
         self._model = model
         self._device = device
+
+    @property
+    def device(self) -> str:
+        """The resolved device this encoder runs on.
+
+        Exposed so the lifespan can log what detection actually chose. A
+        configured ``"auto"`` is not the answer to that question.
+        """
+        return self._device
 
     @classmethod
     def load(cls, model_id: str, device: str) -> ClipEmbeddingService:
@@ -106,7 +219,10 @@ class ClipEmbeddingService:
                 checkpoint the corpus was embedded with — a mismatch yields a
                 "shared" space that is not shared, and search degrades to noise
                 rather than failing.
-            device: Torch device for the forward pass.
+            device: Torch device, or ``"auto"`` to detect one. Resolution
+                happens here rather than in the caller so that every entry
+                point — the lifespan, a test, a future CLI — gets detection
+                without repeating it.
 
         Returns:
             A service ready to encode.
@@ -116,8 +232,9 @@ class ClipEmbeddingService:
         # does not drag in torch and ~2 s of import time.
         from sentence_transformers import SentenceTransformer
 
-        LOGGER.info("Loading CLIP model %r on %s", model_id, device)
-        return cls(SentenceTransformer(model_id, device=device), device)
+        resolved = resolve_device(device)
+        LOGGER.info("Loading CLIP model %r on %s", model_id, resolved)
+        return cls(SentenceTransformer(model_id, device=resolved), resolved)
 
     def embed_text(self, text: str) -> NDArray[np.float32]:
         """Project a text query into CLIP's shared image/text space.

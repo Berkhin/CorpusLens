@@ -69,14 +69,46 @@ class Settings(BaseSettings):
             checkpoint the images were embedded with — a mismatch silently
             yields a shared space that isn't shared, and search degrades to
             noise rather than failing loudly.
-        torch_device: Pinned to ``"cpu"`` as a ``Literal`` rather than left a
-            free string: CLAUDE.md §2 forbids CUDA/MPS, and torch 2.2.2 (the
-            last macOS x86_64 wheel) has no usable accelerator here anyway.
-            Typing it this way makes a misconfigured ``.env`` a startup
-            validation error instead of a runtime crash.
-        torch_num_threads: Cap on torch's intra-op CPU threads. ``None`` lets
-            torch choose. Worth lowering if the API shares the machine with
-            the dev server.
+        torch_device: Where the query encoder runs. ``"auto"`` resolves at
+            startup via
+            :func:`~app.services.embedding.resolve_device` (``cuda`` → ``mps``
+            → ``cpu``). The explicit values are an operator override, which
+            matters on a shared workstation whose GPU belongs to a training run
+            this tool should stay off. A ``Literal`` rather than a free string
+            so a typo in ``.env`` is a startup validation error naming the
+            valid options, not an opaque torch failure on the first query.
+        torch_num_threads: Cap on torch's intra-op CPU threads. Defaults to 1
+            rather than to torch's own default of one-per-core, because this
+            process runs forward passes *concurrently* from a worker pool: the
+            two multiply, and 40 workers times 8 intra-op threads oversubscribe
+            an 8-core machine forty-fold. Parallelism across requests is the
+            useful axis here; parallelism within one short text encode is not.
+            Raise it for a single-user machine running large batches; ``None``
+            restores torch's default.
+        worker_threads: Size of the anyio worker pool every blocking repository
+            and encoder call is pushed onto. anyio's default of 40 assumes
+            those threads do I/O and mostly wait; ours do CPU-bound torch and
+            Lance work. Bounding the pool near the core count is what makes
+            queueing, rather than thrashing, the behaviour under load. ``None``
+            keeps anyio's default.
+        search_nprobes: IVF partitions probed per query when an ANN index
+            exists. Has almost no effect on recall (sweeping 1→256 on the
+            reference corpus moved recall@20 by 0.008) because the loss under
+            IVF-PQ is quantization, not pruning — see ``search_refine_factor``,
+            which is the lever that matters, and CLAUDE.md §4.4.
+        search_refine_factor: Multiplier on the candidate pool re-ranked against
+            full-precision vectors before returning. This is what buys recall
+            back: measured 0.695 → 0.997 at 10 on the reference corpus, and
+            1.000 on a 200k-row corpus. Costs latency roughly linearly, which is
+            a trade worth making — an approximate answer that looks exact is the
+            failure mode this tool cannot afford.
+        exact_scan_ceiling: Candidate count below which a *filtered* query
+            bypasses the ANN index and scans exactly. Set from the measured cost
+            of an exact scan (~1 ms per 1 000 rows), so the default is ~50 ms of
+            work. The reason this exists is correctness, not speed: an IVF
+            pre-filter applies within probed partitions, which measured 0.71
+            recall against an exact 1.000 on a 20%-selective filter while still
+            returning a full page. CLAUDE.md §4.4 has the table.
         cors_allow_origins: Browser origins permitted to call the API.
             Defaults to Vite's dev server on both loopback spellings. Accepts
             either a comma-separated list or a JSON array from the environment.
@@ -110,8 +142,13 @@ class Settings(BaseSettings):
     max_collection_overrides: int = 1000
 
     clip_model_id: str = "clip-ViT-B-32"
-    torch_device: Literal["cpu"] = "cpu"
-    torch_num_threads: int | None = None
+    torch_device: Literal["auto", "cpu", "cuda", "mps"] = "auto"
+    torch_num_threads: int | None = 1
+    worker_threads: int | None = 8
+
+    search_nprobes: int = 20
+    search_refine_factor: int = 10
+    exact_scan_ceiling: int = 50_000
 
     #: ``NoDecode`` suppresses pydantic-settings' default JSON parse of complex
     #: types, which would reject the comma-separated spelling every other tool

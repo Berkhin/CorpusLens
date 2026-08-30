@@ -35,7 +35,7 @@ and CLIP classes are just the ones wired in today. Swapping the store or the enc
 new class and two lines in the composition root — and test doubles conform without inheriting
 anything.
 
-**🐳 Great developer experience.** `make setup && make up` and you're running, with hot reload
+**🐳 Great developer experience.** `make start` and you're running, with hot reload
 on both ends. `make lint` and `make test` run exactly what CI runs, in the same order — green
 locally means green on the PR. Docker is fully supported but never mandatory: the bare
 `uvicorn` + `vite` path is a first-class citizen.
@@ -58,12 +58,17 @@ ground truth, and CSV/JSONL export of whatever you narrowed down to.
 **Prerequisites:** Docker with Compose v2, ~4 GB free disk.
 
 ```bash
-# 1. One time: download the corpus, embed it on CPU, build the index (~15 min, ~3 GB)
-make setup
-
-# 2. Start the backend and frontend with hot reload
-make up
+make start
 ```
+
+That is the whole thing: it downloads the corpus, embeds it, builds the index (~15 min, ~3 GB
+the first time) and then starts the backend and frontend with hot reload. It is also the
+default goal, so a bare `make` does the same.
+
+Safe to re-run. Ingestion skips what is already in the table, so on a machine that is already
+set up this re-derives the projection and the quality measurements in seconds and starts the
+stack. The two halves stay available on their own — `make up` after a reboot does not re-run
+the fifteen-minute job, and `make setup` re-runs the pipeline without touching the containers.
 
 Open **http://localhost:5173** — the API and its OpenAPI docs are on
 **http://localhost:8000/docs**.
@@ -72,11 +77,16 @@ Open **http://localhost:5173** — the API and its OpenAPI docs are on
 <summary><strong>In a hurry?</strong> Smoke-test with 100 images in about two minutes.</summary>
 
 ```bash
-make setup ARGS='--limit 100'
+make setup ARGS='--limit 100' && make up
 ```
 
 `--limit` always takes a stable prefix, so a limited run and a full run agree on record *i*.
 You can run the full ingest later without `--force`.
+
+It bounds the **embedding**, not the download: Hugging Face fetches whole parquet shards to
+resolve a split slice, and the CLIP checkpoint comes down in full either way, so `data/` still
+receives about 2.7 GB. The two minutes are CPU time saved, not bandwidth — tracked as
+[#3](https://github.com/Berkhin/CorpusLens/issues/3).
 
 </details>
 

@@ -19,6 +19,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Final
 
+import anyio.to_thread
 import torch
 from fastapi import FastAPI
 
@@ -94,6 +95,45 @@ def _verify_data_layout(settings: Settings) -> None:
         )
 
 
+def _configure_concurrency(settings: Settings) -> None:
+    """Stop the two thread pools in this process from multiplying.
+
+    Two pools size themselves independently and compose badly. anyio's worker
+    pool defaults to 40 threads on the assumption that each one blocks on I/O
+    and mostly waits; every task this application sends there is instead
+    CPU-bound torch or Lance work. torch then defaults to one intra-op thread
+    per core. On the 8-core reference machine that is up to 40 x 8 = 320
+    runnable threads competing for 8 cores, where each individual query is
+    *slower* than it would be with a smaller pool.
+
+    It is invisible in single-user localhost testing — the usage this tool was
+    built for — and shows up the moment anyone points a benchmark at it, which
+    is a thing open-sourcing invites.
+
+    The fix is to make each request cheap and let the pool bound concurrency:
+    one intra-op thread per forward pass, and a pool near the core count, so
+    excess load queues instead of thrashing. Both are overridable for the
+    single-user machine running one large batch, where the opposite is right.
+
+    Args:
+        settings: Resolved configuration supplying both bounds.
+    """
+    if settings.torch_num_threads is not None:
+        torch.set_num_threads(settings.torch_num_threads)
+
+    if settings.worker_threads is not None:
+        # RunVar-backed, so it must be set from inside the event loop — which
+        # the lifespan is. Setting it at import time would silently not apply.
+        anyio.to_thread.current_default_thread_limiter().total_tokens = settings.worker_threads
+
+    LOGGER.info(
+        "torch %s, %d intra-op thread(s), %d worker thread(s)",
+        torch.__version__,
+        torch.get_num_threads(),
+        anyio.to_thread.current_default_thread_limiter().total_tokens,
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Create resources before the first request and release them after the last.
@@ -112,22 +152,28 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     _verify_data_layout(settings)
 
-    if settings.torch_num_threads is not None:
-        torch.set_num_threads(settings.torch_num_threads)
-
-    LOGGER.info(
-        "torch %s, %d thread(s)",
-        torch.__version__,
-        torch.get_num_threads(),
-    )
+    _configure_concurrency(settings)
 
     # The two lines that choose implementations. Everything downstream is typed
     # against `EmbeddingService` and `VectorRepository`, so swapping either — a
     # different encoder, Qdrant instead of LanceDB — is confined to here.
     embedder = ClipEmbeddingService.load(settings.clip_model_id, settings.torch_device)
-    repository = LanceDBImageRepository.open(settings.lancedb_dir, settings.lancedb_table_name)
+    repository = LanceDBImageRepository.open(
+        settings.lancedb_dir,
+        settings.lancedb_table_name,
+        nprobes=settings.search_nprobes,
+        refine_factor=settings.search_refine_factor,
+        exact_scan_ceiling=settings.exact_scan_ceiling,
+    )
     projection = ProjectionRepository.load(settings.projection_path)
     analysis = AnalysisRepository.load(settings.analysis_path)
+
+    # Warms the repository's own split cache, so the first dashboard request
+    # does not pay for the whole-corpus scan. The cache lives in the
+    # implementation rather than here on purpose: `deps.py` injects the
+    # repository precisely so that overriding it reaches every service, and a
+    # copy of its data hanging off this bundle would route around that.
+    LOGGER.info("Cached ground-truth splits for %d image(s)", len(repository.split_by_id()))
 
     # Seeded from the splits actually in the index, so a --limit'ed ingestion
     # never offers a collection that can only ever be empty.

@@ -25,6 +25,10 @@ recalling an API (CLAUDE.md §6):
   correct when the auto-projection is removed.
 * ``Table.count_rows(filter=...)`` accepts the same expression syntax, which is
   what makes a filtered page report a filtered total.
+* ``list_indices()`` reports the vector indices on a table, and the query
+  builder exposes ``nprobes`` / ``refine_factor`` / ``bypass_vector_index``.
+  Those four are what let one code path serve both an indexed and an unindexed
+  corpus; see :meth:`LanceDBImageRepository._apply_search_strategy`.
 
 Predicate strings themselves are built in :mod:`app.repositories.filters`; this
 module only decides which query to run and how to map rows back to the domain.
@@ -71,6 +75,45 @@ _DETAIL_COLUMNS: Final = ["id", "file_name", "split", "captions"]
 #: an approximation.
 _DISTANCE_COLUMN: Final = "_distance"
 
+#: Fallbacks for the search tunables, used when a caller constructs this class
+#: directly. The application passes them explicitly from ``Settings``, which is
+#: where the reasoning behind each value is documented.
+_DEFAULT_NPROBES: Final = 20
+_DEFAULT_REFINE_FACTOR: Final = 10
+_DEFAULT_EXACT_SCAN_CEILING: Final = 50_000
+
+
+def _detect_ann_index(table: Any) -> bool:  # noqa: ANN401 - lancedb ships no py.typed
+    """Report whether a vector index exists on the table.
+
+    Resolved once at construction rather than per query: the API never writes
+    to the table, so an index cannot appear or vanish while the process runs,
+    and ``list_indices()`` is a metadata read we should not repeat 20 times a
+    second.
+
+    A table with no index is the normal case at the reference corpus size and
+    is not a degraded state — it is the exact-search path.
+
+    Args:
+        table: An open LanceDB table, or a test double standing in for one.
+
+    Returns:
+        True when at least one index is present. Any failure to introspect is
+        reported as False: falling back to an exact scan is always correct,
+        merely slower, whereas assuming an index that is not there would send
+        unsupported ``nprobes`` calls at the query builder.
+    """
+    lister = getattr(table, "list_indices", None)
+    if lister is None:
+        return False
+    try:
+        return bool(list(lister()))
+    # Deliberately broad: see the docstring — any failure to introspect means
+    # "scan exactly", which is always correct and merely slower.
+    except Exception:
+        LOGGER.warning("Could not read index metadata; using exact search", exc_info=True)
+        return False
+
 
 class LanceDBImageRepository:
     """Read-only access to the ingested corpus index, backed by LanceDB.
@@ -84,7 +127,14 @@ class LanceDBImageRepository:
     (CLAUDE.md §4.2), so this class exposes queries only.
     """
 
-    def __init__(self, table: Any) -> None:  # noqa: ANN401 - lancedb ships no py.typed
+    def __init__(
+        self,
+        table: Any,  # noqa: ANN401 - lancedb ships no py.typed
+        *,
+        nprobes: int = _DEFAULT_NPROBES,
+        refine_factor: int = _DEFAULT_REFINE_FACTOR,
+        exact_scan_ceiling: int = _DEFAULT_EXACT_SCAN_CEILING,
+    ) -> None:
         """Wrap an already-open LanceDB table.
 
         Prefer :meth:`open`; this constructor exists so tests can inject a
@@ -92,16 +142,39 @@ class LanceDBImageRepository:
 
         Args:
             table: An open ``lancedb.table.Table``.
+            nprobes: IVF partitions to probe when the ANN path is taken.
+            refine_factor: Candidate multiplier re-ranked against full-precision
+                vectors. The recall lever; see :meth:`search_by_vector`.
+            exact_scan_ceiling: Survivor count below which a filtered query
+                bypasses the index and scans exactly.
         """
         self._table = table
+        self._nprobes = nprobes
+        self._refine_factor = refine_factor
+        self._exact_scan_ceiling = exact_scan_ceiling
+        self._has_ann_index = _detect_ann_index(table)
+        #: Memoized whole-corpus split projection; see :meth:`split_by_id`.
+        self._split_cache: dict[str, str] | None = None
 
     @classmethod
-    def open(cls, lancedb_dir: Path, table_name: str) -> LanceDBImageRepository:
+    def open(
+        cls,
+        lancedb_dir: Path,
+        table_name: str,
+        *,
+        nprobes: int = _DEFAULT_NPROBES,
+        refine_factor: int = _DEFAULT_REFINE_FACTOR,
+        exact_scan_ceiling: int = _DEFAULT_EXACT_SCAN_CEILING,
+    ) -> LanceDBImageRepository:
         """Connect to the embedded database and open the images table.
 
         Args:
             lancedb_dir: Directory backing the embedded database.
             table_name: Table written by the ingestion script.
+            nprobes: IVF partitions to probe when the ANN path is taken.
+            refine_factor: Candidate multiplier for the ANN re-ranking pass.
+            exact_scan_ceiling: Survivor count below which a filtered query
+                scans exactly instead of using the index.
 
         Returns:
             A repository bound to that table.
@@ -124,8 +197,19 @@ class LanceDBImageRepository:
             )
 
         table = connection.open_table(table_name)
-        LOGGER.info("Opened LanceDB table %r (%d rows)", table_name, table.count_rows())
-        return cls(table)
+        repository = cls(
+            table,
+            nprobes=nprobes,
+            refine_factor=refine_factor,
+            exact_scan_ceiling=exact_scan_ceiling,
+        )
+        LOGGER.info(
+            "Opened LanceDB table %r (%d rows, %s)",
+            table_name,
+            table.count_rows(),
+            "ANN index present" if repository._has_ann_index else "exact search",
+        )
+        return repository
 
     def close(self) -> None:
         """Release the table handle.
@@ -179,14 +263,32 @@ class LanceDBImageRepository:
         the *overrides*, so the default half of every image's membership lives
         here.
 
+        **Memoized after the first call.** This is reached from
+        ``CollectionService.membership()``, and so from both ``/dataset/stats``
+        and ``/collections`` — two endpoints the client requests on load. Paying
+        a whole-corpus scan on each was ~93 ms at the reference size but is
+        linear: ~2.3 s per dashboard load at 200k rows, ~12 s at a million.
+
+        Caching is sound rather than merely convenient because the API never
+        writes to this table (CLAUDE.md §4.2), so the mapping cannot change
+        while the process runs. The overlay that *does* change is a separate
+        store and is read fresh on every request. The cost is residency —
+        roughly 50 bytes per image, so ~50 MB at a million images, which is the
+        scale at which this should become an eviction cache instead.
+
         Returns:
-            Image id to split name, for the whole corpus.
+            Image id to split name, for the whole corpus. The same dict object
+            on every call, so callers must treat it as read-only.
         """
+        if self._split_cache is not None:
+            return self._split_cache
+
         table = self._require_table()
         projection = table.search().select(["id", "split"]).limit(None).to_arrow()
         ids = cast(list[str], projection.column("id").to_pylist())
         splits = cast(list[str], projection.column("split").to_pylist())
-        return dict(zip(ids, splits, strict=True))
+        self._split_cache = dict(zip(ids, splits, strict=True))
+        return self._split_cache
 
     def list_ids(self, image_filter: ImageFilter | None, *, limit: int) -> list[str]:
         """Return the ids of the images a filter selects.
@@ -369,11 +471,10 @@ class LanceDBImageRepository:
     ) -> list[SearchHit]:
         """Rank images by cosine similarity to a query vector.
 
-        No ANN index exists by design (see the closing note in
-        ``scripts/ingest.py``): at ~8k rows an exact brute-force scan over
-        8k x 512 float32 is single-digit milliseconds and lossless, whereas
-        IVF_PQ at this scale would quantize vectors for no latency win. This
-        call therefore returns exact nearest neighbours.
+        Exactness is preserved wherever it is affordable, which at the corpus
+        sizes this tool targets is nearly everywhere. Three regimes, chosen per
+        query by :meth:`_apply_search_strategy`; CLAUDE.md §4.4 is the contract
+        and carries the measurements.
 
         Args:
             vector: Unit-length query embedding in CLIP's shared space.
@@ -386,15 +487,69 @@ class LanceDBImageRepository:
                 the ranking missing.
 
         Returns:
-            Hits ordered by decreasing similarity.
+            Hits ordered by decreasing similarity. Exact unless the corpus is
+            both indexed and unfiltered — or indexed and filtered so loosely
+            that more than ``exact_scan_ceiling`` rows survive.
         """
         table = self._require_table()
-        query = table.search(vector).metric("cosine").select([*_DETAIL_COLUMNS, _DISTANCE_COLUMN])
         expression = build_filter_expression(image_filter)
+
+        query = self._apply_search_strategy(table.search(vector).metric("cosine"), expression)
+        query = query.select([*_DETAIL_COLUMNS, _DISTANCE_COLUMN])
         if expression is not None:
             query = query.where(expression, prefilter=True)
+
         rows = query.limit(limit).to_list()
         return [_to_hit(row) for row in cast(list[dict[str, Any]], rows)]
+
+    def _apply_search_strategy(
+        self,
+        query: Any,  # noqa: ANN401 - lancedb ships no py.typed
+        expression: str | None,
+    ) -> Any:  # noqa: ANN401 - lancedb ships no py.typed
+        """Choose between the exact scan and the ANN path for one query.
+
+        The interesting case is the third one, and it is a correctness fix
+        rather than a tuning knob. An IVF pre-filter is applied *within the
+        probed partitions*, so a selective filter starves the candidate pool
+        and the shortfall cannot be probed away. Measured on a 200k-row corpus
+        with a filter selecting 20% of rows: recall@20 fell from an exact 1.000
+        to 0.71, and raising ``nprobes`` from 20 to 200 moved it only to 0.75 —
+        while every configuration still returned a full page of results, so
+        nothing downstream could detect the loss.
+
+        The saving grace is that the same selectivity which breaks the index
+        also makes the exact scan cheap: few survivors is little to scan. So a
+        filtered query below the ceiling takes the exact path and keeps the
+        guarantee ``vector_db.VectorRepository`` documents.
+
+        ``count_rows`` on the predicate costs a scan of its own, but a
+        projection-free one, and it is what lets the decision rest on the real
+        survivor count rather than on a guess about the predicate's shape — the
+        collection overlay compiles to id literals whose selectivity is not
+        readable from the expression.
+
+        Args:
+            query: A LanceDB vector query builder, freshly created.
+            expression: The compiled pre-filter, or ``None`` when unfiltered.
+
+        Returns:
+            The same builder with the chosen strategy applied.
+        """
+        if not self._has_ann_index:
+            # Exact by construction — there is no index to bypass.
+            return query
+
+        if expression is None:
+            return query.nprobes(self._nprobes).refine_factor(self._refine_factor)
+
+        survivors = int(self._require_table().count_rows(filter=expression))
+        if survivors <= self._exact_scan_ceiling:
+            LOGGER.debug("Filter leaves %d row(s); bypassing the index for exactness", survivors)
+            return query.bypass_vector_index()
+
+        LOGGER.debug("Filter leaves %d row(s); using the ANN path", survivors)
+        return query.nprobes(self._nprobes).refine_factor(self._refine_factor)
 
     def _require_table(self) -> Any:  # noqa: ANN401 - lancedb ships no py.typed
         """Return the open table, or fail loudly if it was already closed."""

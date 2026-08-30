@@ -28,15 +28,15 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 
 # torch first and separately, from PyTorch's CPU index: on Linux the default
-# PyPI wheel bundles CUDA and weighs ~2 GB, which is useless here and ruled out
-# by CLAUDE.md §2. Same 2.2.2 pin as requirements.txt, so the container and the
-# host venv never resolve to different dependency sets.
-RUN pip install --index-url https://download.pytorch.org/whl/cpu torch==2.2.2
+# PyPI wheel bundles CUDA and weighs ~2 GB, and this container has no GPU to
+# reach. Unpinned because requirements.txt caps torch at 2.2.2 only for macOS
+# x86_64 and asks Linux for >=2.4 — pinning 2.2.2 here would install a wheel the
+# next layer replaces with the CUDA build this line exists to avoid.
+RUN pip install --index-url https://download.pytorch.org/whl/cpu torch
 
-# torch is already satisfied below (PEP 440 treats the local version 2.2.2+cpu
-# as matching ==2.2.2), so this does not pull it again. requirements-dev.txt is
-# included because this is the image a contributor without a host venv would run
-# `ruff`/`mypy`/`pytest` in.
+# torch is already satisfied by the layer above, so this does not pull it again.
+# requirements-dev.txt is included because this is the image a contributor
+# without a host venv would run `ruff`/`mypy`/`pytest` in.
 COPY requirements.txt requirements-dev.txt ./
 RUN pip install -r requirements.txt -r requirements-dev.txt
 
