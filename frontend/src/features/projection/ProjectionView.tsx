@@ -14,6 +14,7 @@ import { useImageSearch } from '@/features/search/useImageSearch'
 import { ScatterCanvas } from '@/features/projection/ScatterCanvas'
 import { assignSplitColours, readScatterPalette } from '@/features/projection/scatter-palette'
 import type { ScreenPoint } from '@/features/projection/scatter-viewport'
+import { useDebouncedValue } from '@/lib/useDebouncedValue'
 import { useElementSize } from '@/lib/useElementSize'
 import { usePointPositions, useProjection } from '@/features/projection/useProjection'
 import { ApiError, type SearchTarget } from '@/lib/api-client'
@@ -27,6 +28,19 @@ type ProjectionViewProps = {
 }
 
 type HoverState = { point: ProjectionPoint; at: ScreenPoint } | null
+
+/**
+ * How long the cursor must rest on a point before its image is requested.
+ *
+ * The card itself appears immediately — the id, the split and the position all
+ * come from the projection payload already in memory, so there is nothing to
+ * wait for. Only the thumbnail and caption, which need a request, wait.
+ *
+ * Long enough that crossing a dense region costs nothing, short enough that
+ * deliberately pointing at a dot still feels immediate. Sweeping the cloud used
+ * to fire one request per point crossed, each cancelling the last.
+ */
+const HOVER_FETCH_DELAY_MS = 300
 
 /** Render the PCA variance figure as the caveat it is. */
 function varianceCaption(method: string, ratio: readonly number[] | null): string {
@@ -65,6 +79,18 @@ export function ProjectionView({ filter, target, onSelect }: ProjectionViewProps
 
   const points = useMemo(() => data?.points ?? [], [data])
   const positions = usePointPositions(points)
+
+  // Which point the cursor is on now, and which it was still on a moment ago.
+  // The fetch is allowed only where those agree — that is what "has rested
+  // here" means, and it is why a stale id can never reach the card and show
+  // the wrong image under the cursor.
+  //
+  // Debounced here rather than inside HoverCard because the card unmounts every
+  // time the cursor crosses empty space. State inside it would reset on each
+  // gap, and a sweep through a sparse region would fire immediately again.
+  const hoveredId = hover?.point.id ?? null
+  const settledId = useDebouncedValue(hoveredId, HOVER_FETCH_DELAY_MS)
+  const hoverHasSettled = hoveredId !== null && settledId === hoveredId
 
   const highlightedIds = useMemo(
     () => new Set((hits?.results ?? []).map((result) => result.image.id)),
@@ -202,6 +228,7 @@ export function ProjectionView({ filter, target, onSelect }: ProjectionViewProps
             split={hover.point.split}
             at={hover.at}
             container={size}
+            mayFetch={hoverHasSettled}
           />
         )}
       </div>
